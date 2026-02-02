@@ -1,1 +1,25 @@
+# c++ binaries after comp.
+*.o
+src/daemon/noesc_daemon
+
+# python thingz
+__pycache__/
+*.pyc
+
+# VE's
+venv/
+env/
+
+# datasets 
+data/
+*.log
+*.csv
+
+# trained models
+# models/*.pkl
+
+# Ignore OS files
+.DS_Store
+
+# ignore paper
 CMSC190_KJVBorja_SP1.pdf
