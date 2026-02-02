@@ -6,7 +6,7 @@
 
 ## Author
 
-**Klenn Jakek V. Borja**  
+**Klenn Jakek V. Borja && Joseph Anthony C. Hermocilla**  
 University of the Philippines Los Baños (UPLB)  
 Institute of Computer Science  
 Email: [kvborja@up.edu.ph](mailto:kvborja@up.edu.ph)
