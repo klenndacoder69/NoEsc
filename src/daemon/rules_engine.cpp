@@ -34,6 +34,12 @@ void RulesEngine::check_privilege_escalation(const LogEvent& event) {
         else if (event.exe.find("\"/usr/bin/") == 0) is_standard_path = true;
         else if (event.exe.find("\"/sbin/") == 0) is_standard_path = true;
         else if (event.exe.find("\"/usr/sbin/") == 0) is_standard_path = true;
+        
+        // System Library Paths (for legitimate daemons like systemd-executor, gdm-session-worker)
+        else if (event.exe.find("/usr/lib/") == 0) is_standard_path = true;
+        else if (event.exe.find("\"/usr/lib/") == 0) is_standard_path = true;
+        else if (event.exe.find("/usr/libexec/") == 0) is_standard_path = true;
+        else if (event.exe.find("\"/usr/libexec/") == 0) is_standard_path = true;
 
         // Allow Student Sandbox Directory (Academic Use Case)
         else if (event.exe.find("/opt/student_sandbox/") == 0) is_standard_path = true;
@@ -49,9 +55,20 @@ void RulesEngine::check_privilege_escalation(const LogEvent& event) {
 
 void RulesEngine::check_sensitive_access(const LogEvent& event) {
     // Heuristic 3: Sensitive File Tampering (Pattern Matching)
-    // We rely on the audit key injected by our rules (e.g., 'benign_perm')
-    if (event.key.find("perm") != std::string::npos) {
-        alert("SensitiveTampering", "Permission modification detected", event);
+    // Keys: "identitychange", "sudochange" (from harvest_logs.sh)
+    // We removed "perm" to avoid noise from generic chmod calls.
+    
+    bool is_sensitive_key = (event.key.find("identitychange") != std::string::npos) ||
+                            (event.key.find("sudochange") != std::string::npos);
+
+    if (is_sensitive_key) {
+        // Logic: Alert ONLY if the process performing the change is NOT running as Root (EUID != 0)
+        // Root is allowed to change these files. Normal users are not.
+        if (event.euid != 0) {
+            std::string msg = "Unauthorized Modification Attempt! Non-Root User (EUID=" + 
+                              std::to_string(event.euid) + ") modified a critical file.";
+            alert("SensitiveTampering", msg, event);
+        }
     }
 }
 

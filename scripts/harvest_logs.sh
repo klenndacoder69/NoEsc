@@ -52,11 +52,11 @@ echo "[*] Configuring Log Rotation (Safety limits)..."
 # Ensure the file exists
 touch /etc/audit/auditd.conf
 
-# set max log file to only 20
-sed -i 's/^max_log_file =.*/max_log_file = 20/' /etc/audit/auditd.conf
+# set max log file to 50 (Optimized for ML Dataset)
+sed -i 's/^max_log_file =.*/max_log_file = 50/' /etc/audit/auditd.conf
 
-# a maximum of 5 logs should only be considered
-sed -i 's/^num_logs =.*/num_logs = 5/' /etc/audit/auditd.conf
+# a maximum of 10 logs should only be considered (500MB Total Buffer)
+sed -i 's/^num_logs =.*/num_logs = 10/' /etc/audit/auditd.conf
 
 # rotate when full
 sed -i 's/^max_log_file_action =.*/max_log_file_action = ROTATE/' /etc/audit/auditd.conf
@@ -90,6 +90,11 @@ cat >/etc/audit/rules.d/99-noesc-harvest.rules <<EOF
 ## 3. CAPTURE PERMISSION CHANGES
 -a always,exit -F arch=b64 -S chmod,fchmod,fchmodat,chown,fchown,fchownat -F auid>=1000 -F auid!=-1 -k benign_perm
 -a always,exit -F arch=b32 -S chmod,fchmod,fchmodat,chown,fchown,fchownat -F auid>=1000 -F auid!=-1 -k benign_perm
+
+## 4. SENSITIVE FILE WATCHES (Targeted Tampering Detection)
+-w /etc/passwd -p wa -k identitychange
+-w /etc/shadow -p wa -k identitychange
+-w /etc/sudoers -p wa -k sudochange
 EOF
 
 # restart

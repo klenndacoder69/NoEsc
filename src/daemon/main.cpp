@@ -30,10 +30,10 @@ int main() {
       // Parse the raw line
       if (AuditParser::parse_line(line, event)) {
         // DEBUG: Print parsed event fields
-        std::cout << "[DEBUG] Parsed Event: "
-                  << "Type=" << event.type << " Syscall=" << event.syscall_id
-                  << " AUID=" << event.auid << " EXE=" << event.exe
-                  << " Key=" << event.key << std::endl;
+        // std::cout << "[DEBUG] Parsed Event: "
+        //           << "Type=" << event.type << " Syscall=" << event.syscall_id
+        //           << " AUID=" << event.auid << " EXE=" << event.exe
+        //           << " Key=" << event.key << std::endl;
 
         // Heuristic Check
         engine.evaluate(event);

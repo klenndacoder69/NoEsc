@@ -34,3 +34,14 @@ These scripts run as root (`euid=0`) but are technically initiated by the user (
 
 **Future Mitigation:**
 The system should implement **Parent Process Tracking**. Before alerting, the engine should check if the parent process (`ppid`) is a known package manager (e.g., `dpkg`, `apt`, `snapd`) and whitelist the child process execution.
+
+## 4. Sensitive File Tampering Logic Correction
+
+**Original Proposal (Section I):**
+> "Alert will be generated if... the action initiated by the process has an `auid` of 0 (root)."
+
+**Implemented Logic:**
+> Alert if the process has an `euid` **NOT EQUAL** to 0 (Non-Root).
+
+**Reason for Change:**
+The original text likely contained a typo. Alerting on Root modifications would flag legitimate administrative actions (e.g., `useradd`, `passwd`). The goal is to detect *unauthorized* tampering, which occurs when a non-root process attempts to write to these files (indicating a permission bypass or misconfiguration).
