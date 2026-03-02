@@ -1,6 +1,7 @@
 # c++ binaries after comp.
 *.o
 src/daemon/noesc_daemon
+sample_set/
 
 # python thingz
 __pycache__/
