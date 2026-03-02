@@ -5,75 +5,72 @@
 # Author: Klenn Jakek Borja
 
 # 1. CHECK FOR ROOT
-if [ "$EUID" -ne 0 ]; then 
-  echo "[-] Please run as root (sudo ./deploy_harvest_v2.sh)"
+if [ "$EUID" -ne 0 ]; then
+  echo "[-] Please run as root (sudo ./harvest_logs.sh)"
+  echo "[-] Or use chmod +x and run the program"
   exit
 fi
 
 echo "[*] Starting NoEsc Harvest Setup..."
 
-# ==========================================
-# STEP 0: INSTALL DEPENDENCIES
-# ==========================================
+# step 0: setup
+# Installing necessary dependencies
 echo "[*] Checking for auditd installation..."
 
-if ! command -v auditd &> /dev/null; then
-    echo "[!] Auditd not found. Installing..."
-    
-    # Update package lists to ensure we find the package
-    apt-get update -q
-    
-    # Install auditd silently (-y)
-    apt-get install -y auditd audispd-plugins
-    
-    # Enable it to start on boot
-    systemctl enable auditd
-    systemctl start auditd
-    
-    echo "[+] Auditd installed successfully."
+# take note that these commands are to be used only in an Ubuntu environment which the LAB PCs currently have
+if ! command -v auditd &>/dev/null; then
+  echo "[!] Auditd not found. Installing..."
+
+  apt-get update -q
+
+  # install auditd
+  apt-get install -y auditd audispd-plugins
+
+  # Enable it to start on boot
+  systemctl enable auditd
+  systemctl start auditd
+
+  echo "[+] Auditd installed successfully."
 else
-    echo "[+] Auditd is already installed."
+  echo "[+] Auditd is already installed."
 fi
 
-# ==========================================
-# STEP 1: BACKUP CONFIGURATIONS
-# ==========================================
-# Only backup if the backup doesn't exist yet (to avoid overwriting original with a modified one)
+# step 1: backup
+# check if a backup exists, if not create.
 if [ ! -f /etc/audit/auditd.conf.bak_noesc ]; then
-    echo "[*] Backing up existing audit configurations..."
-    cp /etc/audit/auditd.conf /etc/audit/auditd.conf.bak_noesc
-    # Check if rules exist before backing up
-    if [ -f /etc/audit/rules.d/audit.rules ]; then
-        cp /etc/audit/rules.d/audit.rules /etc/audit/rules.d/audit.rules.bak_noesc
-    fi
+  echo "[*] Backing up existing audit configurations..."
+  cp /etc/audit/auditd.conf /etc/audit/auditd.conf.bak_noesc
+  # Check if rules exist before backing up
+  if [ -f /etc/audit/rules.d/audit.rules ]; then
+    cp /etc/audit/rules.d/audit.rules /etc/audit/rules.d/audit.rules.bak_noesc
+  fi
 fi
 
-# ==========================================
-# STEP 2: CONFIGURE LOG ROTATION (SAFETY)
-# ==========================================
+# we need to create a log rotation to ensure that the service still runs afterwards
 echo "[*] Configuring Log Rotation (Safety limits)..."
 
 # Ensure the file exists
 touch /etc/audit/auditd.conf
 
-# Set max log file size to 20MB
+# set max log file to only 20
 sed -i 's/^max_log_file =.*/max_log_file = 20/' /etc/audit/auditd.conf
-# Keep only 5 rotated logs
+
+# a maximum of 5 logs should only be considered
 sed -i 's/^num_logs =.*/num_logs = 5/' /etc/audit/auditd.conf
-# When full, ROTATE
+
+# rotate when full
 sed -i 's/^max_log_file_action =.*/max_log_file_action = ROTATE/' /etc/audit/auditd.conf
-# Ignore low disk space warnings (prevents syslog spam)
+
+# ignore space left
 sed -i 's/^space_left_action =.*/space_left_action = IGNORE/' /etc/audit/auditd.conf
 
-# ==========================================
-# STEP 3: INJECT HARVESTING RULES
-# ==========================================
+# rules needed for harvesting and collating data
 echo "[*] Injecting Data Collection Rules..."
 
-# Ensure rules directory exists
+# check if folder exists then add the rules
 mkdir -p /etc/audit/rules.d/
 
-cat > /etc/audit/rules.d/99-noesc-harvest.rules <<EOF
+cat >/etc/audit/rules.d/99-noesc-harvest.rules <<EOF
 ## NoEsc Harvesting Rules
 -D
 -b 8192
@@ -95,9 +92,7 @@ cat > /etc/audit/rules.d/99-noesc-harvest.rules <<EOF
 -a always,exit -F arch=b32 -S chmod,fchmod,fchmodat,chown,fchown,fchownat -F auid>=1000 -F auid!=-1 -k benign_perm
 EOF
 
-# ==========================================
-# STEP 4: RESTART & VERIFY
-# ==========================================
+# restart
 echo "[*] Regenerating audit rules..."
 augenrules --load
 
