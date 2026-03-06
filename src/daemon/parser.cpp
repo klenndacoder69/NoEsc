@@ -66,10 +66,16 @@ bool AuditParser::parse_line(const std::string &line, LogEvent &event) {
   event.uid = extract_int(line, "uid");
   event.suid = extract_int(line, "suid");
   event.fsuid = extract_int(line, "fsuid");
+  event.pid = extract_int(line, "pid");
+  event.ppid = extract_int(line, "ppid");
 
   event.exe = extract_value(line, "exe");
   event.key = extract_value(line, "key");
   event.comm = extract_value(line, "comm");
+  
+  event.a0 = extract_value(line, "a0");
+  event.a1 = extract_value(line, "a1");
+  event.a2 = extract_value(line, "a2");
 
   // Timestamp extraction (format: msg=audit(12345.678:123):)
   // This is slightly weirder as it's inside msg=audit(...)

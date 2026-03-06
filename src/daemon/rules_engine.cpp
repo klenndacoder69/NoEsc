@@ -1,5 +1,35 @@
 #include "rules_engine.h"
 #include <iostream>
+#include <fstream>
+
+RulesEngine::RulesEngine() {
+    load_config();
+}
+
+void RulesEngine::load_config() {
+    // Look for the config file in the standard system directory, 
+    // fallback to local directory for testing.
+    std::ifstream file("/etc/noesc/suid_whitelist.conf");
+    
+    if (!file.is_open()) {
+        file.open("config/suid_whitelist.conf"); // Fallback for local testing
+    }
+
+    if (!file.is_open()) {
+        std::cerr << "[!] Warning: Could not open /etc/noesc/suid_whitelist.conf. Using only hardcoded defaults." << std::endl;
+        return;
+    }
+
+    std::string line;
+    while (std::getline(file, line)) {
+        // Skip empty lines and comments
+        if (line.empty() || line[0] == '#') continue;
+        
+        // Add to whitelist
+        custom_whitelist.push_back(line);
+    }
+    file.close();
+}
 
 void RulesEngine::evaluate(const LogEvent& event) {
     // Only process SYSCALL records for heuristic checks currently
@@ -41,9 +71,15 @@ void RulesEngine::check_privilege_escalation(const LogEvent& event) {
         else if (event.exe.find("/usr/libexec/") == 0) is_standard_path = true;
         else if (event.exe.find("\"/usr/libexec/") == 0) is_standard_path = true;
 
-        // Allow Student Sandbox Directory (Academic Use Case)
-        else if (event.exe.find("/opt/student_sandbox/") == 0) is_standard_path = true;
-        else if (event.exe.find("\"/opt/student_sandbox/") == 0) is_standard_path = true;
+        // Check against dynamic configuration file
+        if (!is_standard_path) {
+            for (const auto& path : custom_whitelist) {
+                if (event.exe.find(path) == 0 || event.exe.find("\"" + path) == 0) {
+                    is_standard_path = true;
+                    break;
+                }
+            }
+        }
 
         if (!is_standard_path) {
             std::string msg = "SUID Abuse Detected! User " + std::to_string(event.auid) +
@@ -77,10 +113,23 @@ void RulesEngine::check_sudo_misuse(const LogEvent& event) {
 }
 
 void RulesEngine::alert(const std::string& vector, const std::string& msg, const LogEvent& event) {
-    // In a real daemon, this might write to syslog or a separate alert log.
-    // Since we are reading from STDIN (auditd), we must NOT write to STDOUT if it feeds back into auditd
-    // (though audispd plugins usually have separate STDOUT/STDERR).
-    // Writing to STDERR is safe for debugging.
-    std::cerr << "[!] NoEsc ALERT [" << vector << "]: " << msg 
-              << " (exe=" << event.exe << " auid=" << event.auid << ")" << std::endl;
+    // Construct a verbose, context-rich alert message
+    std::string context = " | Rule_Key=" + event.key + 
+                          " | User=" + std::to_string(event.auid) + " (euid=" + std::to_string(event.euid) + ")" +
+                          " | Process=" + event.exe + " (pid=" + std::to_string(event.pid) + " ppid=" + std::to_string(event.ppid) + ")" +
+                          " | Command=" + event.comm +
+                          " | Args=[" + event.a0 + ", " + event.a1 + ", " + event.a2 + "]";
+
+    // 1. Print to STDERR (Visible when running manually in the terminal for testing)
+    std::cerr << "[!] NoEsc ALERT [" << vector << "]: " << msg << context << std::endl;
+
+    // 2. Append to Dedicated System Log File (For Daemon Mode)
+    // Note: Daemon runs as root, so it has permission to write here.
+    std::ofstream log_file("/var/log/noesc_alerts.log", std::ios_base::app);
+    if (log_file.is_open()) {
+        log_file << "[" << event.timestamp << "] "
+                 << "ALERT [" << vector << "]: " << msg 
+                 << context << "\n";
+        log_file.close();
+    }
 }

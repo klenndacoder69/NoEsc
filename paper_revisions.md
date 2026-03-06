@@ -45,3 +45,22 @@ The system should implement **Parent Process Tracking**. Before alerting, the en
 
 **Reason for Change:**
 The original text likely contained a typo. Alerting on Root modifications would flag legitimate administrative actions (e.g., `useradd`, `passwd`). The goal is to detect *unauthorized* tampering, which occurs when a non-root process attempts to write to these files (indicating a permission bypass or misconfiguration).
+
+## 5. Stateless Engine Data Extraction Limitation (Methodology Note)
+
+**Original Assumption:**
+The paper implies the heuristic engine can easily read the plain-text target filename (e.g., `/etc/passwd`) directly from a single event to determine what was touched.
+
+**Implemented Reality:**
+The Linux `auditd` framework splits complex events across multiple log lines. The `SYSCALL` record contains the User IDs and Process execution data, but the plain-text filename is often placed in a separate `PATH` record. Because our daemon parses logs statelessly (line-by-line for high performance), it cannot natively link the `PATH` string back to the `SYSCALL` alert without complex memory aggregation.
+
+**Mitigation Implemented:**
+Instead of building a heavy, stateful log aggregator, the engine extracts the raw system call arguments (`a0`, `a1`), the Process ID (`pid`), and the Parent Process ID (`ppid`). The engine alerts the admin using the `key` field to identify the targeted file category (e.g., `identitychange`), and provides the `pid` so the admin can use `ausearch -p <pid> -i` to instantly retrieve the full, human-readable context from the raw kernel logs.
+
+## 6. Dedicated Alert Logging (Architecture Design)
+
+**Original Proposal:**
+Did not specify the exact alerting output mechanism of the user-space daemon.
+
+**Implemented Logic:**
+The daemon now appends all alerts to a dedicated, restricted file: `/var/log/noesc_alerts.log` (Permissions: 600). This prevents alerts from being buried in standard system logs (`syslog` or `journalctl`), providing the administrator with a clean, centralized security dashboard.

@@ -3,15 +3,21 @@
 
 #include "Event.h"
 #include <string>
+#include <vector>
 
 class RulesEngine {
 public:
+    RulesEngine(); // Constructor to load config
+
     /**
      * Evaluates a single parsed log event against heuristic rules.
      */
     void evaluate(const LogEvent& event);
 
 private:
+    std::vector<std::string> custom_whitelist;
+    void load_config(); // Helper to read whitelist file
+
     // Vector 1: Stateless Heuristic (SUID/SGID)
     void check_privilege_escalation(const LogEvent& event);
     
