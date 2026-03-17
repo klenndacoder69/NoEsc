@@ -4,6 +4,13 @@
 #include "Event.h"
 #include <string>
 #include <vector>
+#include <unordered_map>
+
+// Struct for Vector 2: Stateful Scoring
+struct SudoState {
+    int score = 0;
+    long last_event_time = 0; // Unix epoch timestamp
+};
 
 class RulesEngine {
 public:
@@ -18,10 +25,14 @@ private:
     std::vector<std::string> custom_whitelist;
     void load_config(); // Helper to read whitelist file
 
+    // State map for Sudo Misuse (AUID -> State)
+    std::unordered_map<int, SudoState> sudo_scores;
+    long parse_timestamp(const std::string& ts_str); // Helper
+
     // Vector 1: Stateless Heuristic (SUID/SGID)
     void check_privilege_escalation(const LogEvent& event);
     
-    // Vector 2: Stateful Scoring (Placeholder)
+    // Vector 2: Stateful Scoring
     void check_sudo_misuse(const LogEvent& event);
     
     // Vector 3: Pattern Matching

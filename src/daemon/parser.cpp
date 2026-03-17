@@ -2,27 +2,30 @@
 #include <algorithm>
 #include <iostream>
 
-// sample audiit log:
-// type=SYSCALL msg=audit(1764182128.048:665): arch=c000003e syscall=59
-// success=yes exit=0 a0=55f7bda33af0 a1=55f7bd77e110 a2=55f7bda238e0 a3=8
-// items=2 ppid=265555 pid=265556 auid=1000 uid=1000 gid=1000 euid=0 suid=0
-// fsuid=0 egid=1000 sgid=1000 fsgid=1000 tty=pts3 ses=3 comm="find"
-// exe="/usr/bin/find" key="find_executions"ARCH=x86_64 SYSCALL=execve
-// AUID="swuffles" UID="swuffles" GID="swuffles" EUID="root" SUID="root"
-// FSUID="root" EGID="swuffles" SGID="swuffles" FSGID="swuffles"
+/* sample audit log:
+type=SYSCALL msg=audit(1764182128.048:665): arch=c000003e syscall=59
+success=yes exit=0 a0=55f7bda33af0 a1=55f7bd77e110 a2=55f7bda238e0 a3=8
+items=2 ppid=265555 pid=265556 auid=1000 uid=1000 gid=1000 euid=0 suid=0
+fsuid=0 egid=1000 sgid=1000 fsgid=1000 tty=pts3 ses=3 comm="find"
+exe="/usr/bin/find" key="find_executions"ARCH=x86_64 SYSCALL=execve
+AUID="swuffles" UID="swuffles" GID="swuffles" EUID="root" SUID="root"
+FSUID="root" EGID="swuffles" SGID="swuffles" FSGID="swuffles"
+
+The audit log must be separated based on its value. Its value must be converted
+into an integer if it is a number
+*/
 
 std::string AuditParser::extract_value(const std::string &line,
                                        const std::string &key) {
-  std::string search = key + "=";
+  std::string search = key + "="; 
   size_t pos = line.find(search);
   if (pos == std::string::npos)
     return "";
 
   pos += search.length();
 
-  // Check if value is quoted
   if (pos < line.length() && line[pos] == '"') {
-    pos++; // Skip opening quote
+    pos++;
     size_t end = line.find('"', pos);
     if (end == std::string::npos)
       return ""; // EOL/error
@@ -47,6 +50,7 @@ int AuditParser::extract_int(const std::string &line, const std::string &key) {
   }
 }
 
+// main function (where the parsing begins)
 bool AuditParser::parse_line(const std::string &line, LogEvent &event) {
   if (line.empty())
     return false;
@@ -72,10 +76,11 @@ bool AuditParser::parse_line(const std::string &line, LogEvent &event) {
   event.exe = extract_value(line, "exe");
   event.key = extract_value(line, "key");
   event.comm = extract_value(line, "comm");
-  
+
   event.a0 = extract_value(line, "a0");
   event.a1 = extract_value(line, "a1");
   event.a2 = extract_value(line, "a2");
+  event.res = extract_value(line, "res"); // Captures "failed" or "success"
 
   // Timestamp extraction (format: msg=audit(12345.678:123):)
   // This is slightly weirder as it's inside msg=audit(...)

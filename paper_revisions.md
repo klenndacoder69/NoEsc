@@ -64,3 +64,14 @@ Did not specify the exact alerting output mechanism of the user-space daemon.
 
 **Implemented Logic:**
 The daemon now appends all alerts to a dedicated, restricted file: `/var/log/noesc_alerts.log` (Permissions: 600). This prevents alerts from being buried in standard system logs (`syslog` or `journalctl`), providing the administrator with a clean, centralized security dashboard.
+
+## 7. Stateful Sudo Misuse Tuning (Operational Heuristic)
+
+**Original Proposal (Section H):**
+> "On a successful sudo execution of a high-risk command: Increment the user's score by +10." (With a threshold of 20).
+
+**Implemented Logic:**
+> High-risk command execution score increment lowered from +10 to +5.
+
+**Reason for Change:**
+The original +10 scoring meant that running just two legitimate administrative commands (e.g., `sudo cp` followed by `sudo systemctl restart`) within a 60-second window would immediately trigger a False Positive alert. In an academic/laboratory environment where students frequently debug server configurations, this strict threshold causes severe Alert Fatigue. Lowering the increment to +5 requires four rapid-fire `sudo` commands to trigger the threshold, effectively distinguishing between a human debugging a system and an automated exploitation script.

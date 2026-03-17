@@ -6,49 +6,60 @@
 
 #include <string>
 
-/**
- * LogEvent
- * Represents a parsed audit event structure based on Table I of the NoEsc
- * paper. This structure holds the essential fields required for both Heuristic
- * and ML detection.
- */
+/*
+ * The LogEvent data structure contains the fields which include the necessary
+ * things that the engine needs
+ * */
+
 struct LogEvent {
+
   // Meta Information
-  std::string raw_log;   // The original raw log line
-  std::string timestamp; // Event timestamp
-  std::string serial;    // Event serial number
+  std::string raw_log;
+  std::string timestamp;
+  std::string serial; // used to grp logs
 
-  // Core Fields (Table I)
+  // These are the core fields that we need to identify what kind of events are
+  // logged
   std::string type;    // Event Type (e.g., SYSCALL, EXECVE)
-  int syscall_id;      // Numeric syscall ID (from 'syscall=')
-  std::string syscall; // Resolved syscall name (optional/resolved later)
+  int syscall_id;      // This depends on the archi, not really gonna be used
+                       // thoroughly but to ensure that we know according to its
+                       // archi.
+  std::string syscall; // Resolved syscall name
+                       // (optional/resolved later)
 
-  // User Context
-  int auid;  // Audit User ID (Original Login User)
-  int euid;  // Effective User ID (Current Privilege)
-  int uid;   // Real User ID
-  int suid;  // Saved User ID
-  int fsuid; // File System User ID
+  // These details are used to identify "WHO" performed the operations
+  int auid; // auid/euid/uid>=1000(user) : auid/euid=0(root)
+  int euid;
+  int uid;
+  int suid; // saved id
+  int fsuid;
 
-  // Process Context
-  int pid;   // Process ID
-  int ppid;  // Parent Process ID
+  // Details to check what program was executed and where it was executed
+  int pid;  // "what" was executed
+  int ppid; // "where" was it executed
 
-  // Execution Context
-  std::string exe;       // Path to executable
-  std::string cwd;       // Current working directory
-  std::string comm;      // Command name (often truncated)
+  // Supporting details of what was executed
+
+  std::string exe;
+  std::string cwd;
+  std::string comm;
   std::string proctitle; // Full command line (if available in PROCTITLE record)
-  std::string a0;        // Argument 0 (often command or file path)
-  std::string a1;        // Argument 1
-  std::string a2;        // Argument 2
+  std::string a0;
+  std::string a1;
+  std::string a2;
 
-  // Filter Key
-  std::string key; // The audit rule key (e.g., "benign_exec", "priv_esc")
+  // res is used when authentication is a success or failure
+  std::string res;
 
-  // Default Constructor
+  // success or failure of the program execution
+  std::string success;
+
+  // keys
+  std::string key;
+
   LogEvent()
-      : syscall_id(-1), auid(-1), euid(-1), uid(-1), suid(-1), fsuid(-1), pid(-1), ppid(-1) {}
+      : syscall_id(-1), auid(-1), euid(-1), uid(-1), suid(-1), fsuid(-1),
+        pid(-1), ppid(-1) {}
 };
 
 #endif // EVENT_H
