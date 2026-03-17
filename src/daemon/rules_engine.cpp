@@ -44,65 +44,46 @@ void RulesEngine::evaluate(const LogEvent &event) {
 
 void RulesEngine::check_privilege_escalation(const LogEvent &event) {
   // Heuristic 1: Root Escalation (SUID/SGID Abuse)
-  // REVISED Logic (Strict Whitelist - Stronger than Paper):
   // Alert if:
-  // 1. auid != 0 (Non-root user)
-  // 2. euid == 0 (Becomes Root)
-  // 3. exe is NOT in a standard system binary directory (/bin, /usr/bin, /sbin,
-  // /usr/sbin)
-  // BASTA BLACKLIST
+  // 1. Execution succeeded
+  // 2. auid != 0 (non-root login user)
+  // 3. euid == 0 (process gained root)
+  // 4. exe is NOT in a known-safe system path
 
-  if (event.euid == 0 && event.auid != 0 && event.auid != -1) {
-    bool is_standard_path = false;
+  if (event.success != "yes") return;
+  if (!(event.euid == 0 && event.auid != 0 && event.auid != -1)) return;
 
-    // Check against Standard System Paths
-    // Handles unquoted paths
-    if (event.exe.find("/bin/") == 0)
-      is_standard_path = true;
-    else if (event.exe.find("/usr/bin/") == 0)
-      is_standard_path = true;
-    else if (event.exe.find("/sbin/") == 0)
-      is_standard_path = true;
-    else if (event.exe.find("/usr/sbin/") == 0)
-      is_standard_path = true;
+  bool is_standard_path = false;
 
-    // Handles quoted paths (parser might leave quotes)
-    else if (event.exe.find("\"/bin/") == 0)
-      is_standard_path = true;
-    else if (event.exe.find("\"/usr/bin/") == 0)
-      is_standard_path = true;
-    else if (event.exe.find("\"/sbin/") == 0)
-      is_standard_path = true;
-    else if (event.exe.find("\"/usr/sbin/") == 0)
-      is_standard_path = true;
+  // Standard system binary and library paths (parser strips quotes, no need for quoted variants)
+  if      (event.exe.find("/bin/") == 0)         is_standard_path = true;
+  else if (event.exe.find("/usr/bin/") == 0)      is_standard_path = true;
+  else if (event.exe.find("/sbin/") == 0)         is_standard_path = true;
+  else if (event.exe.find("/usr/sbin/") == 0)     is_standard_path = true;
+  else if (event.exe.find("/usr/lib/") == 0)      is_standard_path = true;
+  else if (event.exe.find("/usr/libexec/") == 0)  is_standard_path = true;
 
-    // System Library Paths (for legitimate daemons like systemd-executor,
-    // gdm-session-worker)
-    else if (event.exe.find("/usr/lib/") == 0)
-      is_standard_path = true;
-    else if (event.exe.find("\"/usr/lib/") == 0)
-      is_standard_path = true;
-    else if (event.exe.find("/usr/libexec/") == 0)
-      is_standard_path = true;
-    else if (event.exe.find("\"/usr/libexec/") == 0)
-      is_standard_path = true;
-
-    // Check against dynamic configuration file
-    if (!is_standard_path) {
-      for (const auto &path : custom_whitelist) {
-        if (event.exe.find(path) == 0 || event.exe.find("\"" + path) == 0) {
-          is_standard_path = true;
-          break;
-        }
+  // Dynamic whitelist from config
+  if (!is_standard_path) {
+    for (const auto &path : custom_whitelist) {
+      if (event.exe.find(path) == 0) {
+        is_standard_path = true;
+        break;
       }
     }
+  }
 
-    if (!is_standard_path) {
-      std::string msg =
-          "SUID Abuse Detected! User " + std::to_string(event.auid) +
-          " escalated to ROOT via NON-STANDARD binary: " + event.exe;
-      alert("PrivilegeEscalation", msg, event);
-    }
+  if (!is_standard_path) {
+    // Cooldown: suppress duplicate alerts for the same user within 10s
+    long current_time = parse_timestamp(event.timestamp);
+    auto it = priv_esc_cooldown.find(event.auid);
+    if (it != priv_esc_cooldown.end() && current_time - it->second < ALERT_COOLDOWN_SECS)
+      return;
+    priv_esc_cooldown[event.auid] = current_time;
+
+    std::string msg = "SUID Abuse Detected! User " + std::to_string(event.auid) +
+                      " escalated to ROOT via NON-STANDARD binary: " + event.exe;
+    alert("PrivilegeEscalation", msg, event);
   }
 }
 
@@ -116,10 +97,14 @@ void RulesEngine::check_sensitive_access(const LogEvent &event) {
       (event.key.find("sudochange") != std::string::npos);
 
   if (is_sensitive_key) {
-    // Logic: Alert ONLY if the process performing the change is NOT running as
-    // Root (EUID != 0) Root is allowed to change these files. Normal users are
-    // not.
     if (event.euid != 0) {
+      // Cooldown: suppress duplicate alerts for the same user within 10s
+      long current_time = parse_timestamp(event.timestamp);
+      auto it = sensitive_cooldown.find(event.auid);
+      if (it != sensitive_cooldown.end() && current_time - it->second < ALERT_COOLDOWN_SECS)
+        return;
+      sensitive_cooldown[event.auid] = current_time;
+
       std::string msg =
           "Unauthorized Modification Attempt! Non-Root User (EUID=" +
           std::to_string(event.euid) + ") modified a critical file.";
@@ -149,17 +134,17 @@ void RulesEngine::check_sudo_misuse(const LogEvent &event) {
 
   long current_time = parse_timestamp(event.timestamp);
   if (current_time == 0)
-    return; // Invalid time
+    return;
 
   // 2. Get or create state for this user
   SudoState &state = sudo_scores[event.auid];
 
-  // 3. Time Decay (Sliding Window of 60 seconds)
-  if (state.last_event_time > 0 &&
-      (current_time - state.last_event_time) > 60) {
-    state.score =
-        0; // Reset score if it's been more than 60s since last suspicious act
+  // 3. Time Decay: reset score on ANY event if more than 60s since last activity
+  if (state.last_event_time > 0 && (current_time - state.last_event_time) > 60) {
+    state.score = 0;
   }
+  // Update timestamp on every event so decay window stays accurate
+  state.last_event_time = current_time;
 
   bool score_changed = false;
 
@@ -167,39 +152,51 @@ void RulesEngine::check_sudo_misuse(const LogEvent &event) {
   if (event.type == "USER_AUTH" || event.type == "USER_ERR") {
     if (event.res.find("failed") != std::string::npos) {
       state.score += 1;
-      state.last_event_time = current_time;
       score_changed = true;
     }
   }
 
-  // 5. Rule B: Dangerous Sudo Command (+5 points)
-  // The paper originally proposed +10, but tuned to +5 for lab environments
+  // 5. Rule B: Dangerous Command Executed as Root via Sudo (+5 points)
   if (event.type == "SYSCALL" && event.euid == 0 && event.auid != 0 &&
       event.success == "yes") {
-    std::string exe = event.exe;
-    // Strip quotes if parser left them
-    if (!exe.empty() && exe[0] == '"')
-      exe = exe.substr(1, exe.length() - 2);
-
-    if (exe == "/usr/bin/chmod" || exe == "/bin/chmod" ||
-        exe == "/usr/bin/chown" || exe == "/bin/chown" ||
-        exe == "/usr/bin/cp" || exe == "/bin/cp" ||
-        exe == "/usr/bin/systemctl" || exe == "/bin/systemctl") {
+    const std::string &exe = event.exe;
+    if (exe == "/usr/bin/chmod"    || exe == "/bin/chmod"    ||
+        exe == "/usr/bin/chown"    || exe == "/bin/chown"    ||
+        exe == "/usr/bin/cp"       || exe == "/bin/cp"       ||
+        exe == "/usr/bin/systemctl"|| exe == "/bin/systemctl"||
+        // Account manipulation
+        exe == "/usr/bin/passwd"   ||
+        exe == "/usr/sbin/useradd" || exe == "/usr/bin/useradd" ||
+        exe == "/usr/sbin/usermod" || exe == "/usr/bin/usermod" ||
+        // Sudoers editing
+        exe == "/usr/sbin/visudo"  || exe == "/usr/bin/visudo" ||
+        // Shell / interpreter spawning (GTFOBins)
+        exe == "/usr/bin/bash"     || exe == "/bin/bash"     ||
+        exe == "/usr/bin/sh"       || exe == "/bin/sh"       ||
+        exe == "/usr/bin/python3"  || exe == "/usr/bin/python") {
 
       state.score += 5;
-      state.last_event_time = current_time;
       score_changed = true;
     }
   }
 
-  // 6. Threshold Check (Alert if >= 20)
+  // 6. Debug: log score changes when DEBUG_SCORING is defined
+#ifdef DEBUG_SCORING
+  if (score_changed) {
+    std::cerr << "[~] SudoMisuse score for AUID=" << event.auid
+              << " -> " << state.score << "/20"
+              << " (exe=" << event.exe << ")" << std::endl;
+  }
+#endif
+
+  // 7. Threshold Check (Alert if >= 20)
   if (score_changed && state.score >= 20) {
     std::string msg =
         "Stateful Sudo Misuse Detected! Suspicion Score reached " +
         std::to_string(state.score) + "/20.";
     alert("SudoMisuse", msg, event);
 
-    // Reset score after alert to avoid spamming the logs
+    // Reset score after alert to avoid log flooding
     state.score = 0;
   }
 }

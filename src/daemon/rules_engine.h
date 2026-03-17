@@ -6,6 +6,9 @@
 #include <vector>
 #include <unordered_map>
 
+// Uncomment to enable per-event scoring debug output
+// #define DEBUG_SCORING
+
 // Struct for Vector 2: Stateful Scoring
 struct SudoState {
     int score = 0;
@@ -28,6 +31,11 @@ private:
     // State map for Sudo Misuse (AUID -> State)
     std::unordered_map<int, SudoState> sudo_scores;
     long parse_timestamp(const std::string& ts_str); // Helper
+
+    // Cooldown maps for V1 and V3 (AUID -> last alert Unix time)
+    std::unordered_map<int, long> priv_esc_cooldown;
+    std::unordered_map<int, long> sensitive_cooldown;
+    static constexpr long ALERT_COOLDOWN_SECS = 10;
 
     // Vector 1: Stateless Heuristic (SUID/SGID)
     void check_privilege_escalation(const LogEvent& event);

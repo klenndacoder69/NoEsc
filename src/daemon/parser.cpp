@@ -80,7 +80,8 @@ bool AuditParser::parse_line(const std::string &line, LogEvent &event) {
   event.a0 = extract_value(line, "a0");
   event.a1 = extract_value(line, "a1");
   event.a2 = extract_value(line, "a2");
-  event.res = extract_value(line, "res"); // Captures "failed" or "success"
+  event.res = extract_value(line, "res");         // Captures "failed" or "success"
+  event.success = extract_value(line, "success"); // Captures "yes" or "no"
 
   // Timestamp extraction (format: msg=audit(12345.678:123):)
   // This is slightly weirder as it's inside msg=audit(...)
