@@ -44,7 +44,31 @@ if [ $? -eq 0 ] && [ -f "$OUTPUT_PATH" ]; then
   # Show archive size for user awareness
   ARCHIVE_SIZE=$(du -h "$OUTPUT_PATH" | cut -f1)
   echo "[+] Success! Archive created: $ARCHIVE_SIZE"
-  echo "[+] You can now drag '$ARCHIVE_NAME' to Google Drive."
+
+  # Try to auto-detect USB drive and copy
+  USB_FOUND=0
+  for MOUNT_POINT in /media/$TARGET_USER/* /run/media/$TARGET_USER/* /mnt/*; do
+    if [ -d "$MOUNT_POINT" ] && echo "$MOUNT_POINT" | grep -qi "ventoy"; then
+      USB_COLLECTION="$MOUNT_POINT/NoEsc_Collection"
+      mkdir -p "$USB_COLLECTION"
+
+      echo "[*] Detected USB drive at: $MOUNT_POINT"
+      echo "[*] Copying to USB..."
+
+      if cp "$OUTPUT_PATH" "$USB_COLLECTION/"; then
+        echo "[+] ✓ Copied to USB: $USB_COLLECTION/$ARCHIVE_NAME"
+        USB_FOUND=1
+        break
+      else
+        echo "[!] Failed to copy to USB"
+      fi
+    fi
+  done
+
+  if [ $USB_FOUND -eq 0 ]; then
+    echo "[*] USB drive not detected. File saved to Desktop."
+    echo "[+] You can manually copy '$ARCHIVE_NAME' to your USB."
+  fi
 else
   echo "[-] Failed to create archive."
   exit 1
