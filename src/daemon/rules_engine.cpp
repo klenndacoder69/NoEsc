@@ -213,7 +213,13 @@ void RulesEngine::alert(const std::string &vector, const std::string &msg,
       " | Args=[" + event.a0 + ", " + event.a1 + ", " + event.a2 + "]";
 
   // Add actionable investigation guidance for administrators
-  std::string investigation = " | INVESTIGATE: ausearch -p " + std::to_string(event.pid) + " -i";
+  // Provide both event ID (exact event) and PID (process context)
+  std::string investigation;
+  if (!event.serial.empty()) {
+    investigation = " | INVESTIGATE: ausearch -a " + event.serial + " -i (exact event)";
+  } else {
+    investigation = " | INVESTIGATE: ausearch -p " + std::to_string(event.pid) + " -i";
+  }
 
   std::string severity_str;
   switch (severity) {
@@ -230,14 +236,24 @@ void RulesEngine::alert(const std::string &vector, const std::string &msg,
 
   // 2. Append to Dedicated System Log File (For Daemon Mode)
   // Note: Daemon runs as root, so it has permission to write here.
-  std::ofstream log_file("/var/log/noesc_alerts.log", std::ios_base::app);
+  // For testing, fall back to local file if /var/log is not writable
+  const char* log_path = "/var/log/noesc_alerts.log";
+  const char* fallback_path = "./noesc_alerts.log";
+  
+  std::ofstream log_file(log_path, std::ios_base::app);
+  if (!log_file.is_open()) {
+    // Try fallback location for non-root testing
+    log_file.open(fallback_path, std::ios_base::app);
+  }
+  
   if (log_file.is_open()) {
     log_file << "[" << event.timestamp << "] "
              << "ALERT [" << vector << "]: " << msg << context << investigation << "\n";
     log_file.close();
   } else {
-    // If we can't write to the dedicated log file, ensure the error is visible
-    std::cerr << "[!] WARNING: Failed to write alert to /var/log/noesc_alerts.log" << std::endl;
+    // If we can't write to either location, ensure the error is visible
+    std::cerr << "[!] WARNING: Failed to write alert to " << log_path 
+              << " and " << fallback_path << std::endl;
   }
 
   if (severity >= AlertSeverity::WARNING) {
