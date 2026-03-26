@@ -2,6 +2,9 @@
 #include <fstream>
 #include <iostream>
 #include <syslog.h>
+#include <cstring>  // For strlen, strcpy
+#include <cstdlib>  // For system, popen
+#include <unistd.h> // For getuid()
 
 RulesEngine::RulesEngine() { load_config(); }
 
@@ -30,6 +33,24 @@ void RulesEngine::load_config() {
     custom_whitelist.push_back(line);
   }
   file.close();
+}
+
+AlertSeverity RulesEngine::get_path_based_severity(const std::string& exe_path) {
+  // Risk assessment based on executable location
+  // High-risk paths (commonly used by attackers) = CRITICAL
+  // Medium-risk paths (could be legitimate student work) = WARNING
+  
+  // High-risk: temporary directories, shared memory, unusual locations
+  if (exe_path.find("/tmp/") == 0)       return AlertSeverity::CRITICAL;
+  if (exe_path.find("/dev/shm/") == 0)   return AlertSeverity::CRITICAL;
+  if (exe_path.find("/var/tmp/") == 0)   return AlertSeverity::CRITICAL;
+  
+  // Medium-risk: user directories, optional software (could be coursework)
+  if (exe_path.find("/home/") == 0)      return AlertSeverity::WARNING;
+  if (exe_path.find("/opt/") == 0)       return AlertSeverity::WARNING;
+  
+  // Unknown paths = treat as critical (better safe than sorry)
+  return AlertSeverity::CRITICAL;
 }
 
 void RulesEngine::evaluate(const LogEvent &event) {
@@ -82,9 +103,12 @@ void RulesEngine::check_privilege_escalation(const LogEvent &event) {
       return;
     priv_esc_cooldown[event.auid] = current_time;
 
+    // Determine severity based on executable path (risk assessment)
+    AlertSeverity severity = get_path_based_severity(event.exe);
+    
     std::string msg = "SUID Abuse Detected! User " + std::to_string(event.auid) +
                       " escalated to ROOT via NON-STANDARD binary: " + event.exe;
-    alert("PrivilegeEscalation", msg, event, AlertSeverity::CRITICAL);
+    alert("PrivilegeEscalation", msg, event, severity);
   }
 }
 
@@ -190,15 +214,27 @@ void RulesEngine::check_sudo_misuse(const LogEvent &event) {
   }
 #endif
 
-  // 7. Threshold Check (Alert if >= SUDO_ALERT_THRESHOLD)
-  if (score_changed && state.score >= SUDO_ALERT_THRESHOLD) {
-    std::string msg =
-        "Stateful Sudo Misuse Detected! Suspicion Score reached " +
-        std::to_string(state.score) + "/" + std::to_string(SUDO_ALERT_THRESHOLD) + ".";
-    alert("SudoMisuse", msg, event, AlertSeverity::CRITICAL);
+  // 7. Progressive Threshold Checks (Early Warning + Critical Alert)
+  if (score_changed) {
+    // WARNING: Approaching threshold (15-19 points)
+    if (state.score >= SUDO_WARNING_THRESHOLD && state.score < SUDO_ALERT_THRESHOLD) {
+      std::string msg =
+          "Sudo Score Alert! User " + std::to_string(event.auid) + 
+          " approaching threshold (Score: " + std::to_string(state.score) + 
+          "/" + std::to_string(SUDO_ALERT_THRESHOLD) + ")";
+      alert("SudoMisuse", msg, event, AlertSeverity::WARNING);
+    }
+    
+    // CRITICAL: Threshold reached (20+ points)
+    if (state.score >= SUDO_ALERT_THRESHOLD) {
+      std::string msg =
+          "Stateful Sudo Misuse Detected! Suspicion Score reached " +
+          std::to_string(state.score) + "/" + std::to_string(SUDO_ALERT_THRESHOLD) + ".";
+      alert("SudoMisuse", msg, event, AlertSeverity::CRITICAL);
 
-    // Reset score after alert to avoid log flooding
-    state.score = 0;
+      // Reset score after alert to avoid log flooding
+      state.score = 0;
+    }
   }
 }
 
@@ -248,7 +284,7 @@ void RulesEngine::alert(const std::string &vector, const std::string &msg,
   
   if (log_file.is_open()) {
     log_file << "[" << event.timestamp << "] "
-             << "ALERT [" << vector << "]: " << msg << context << investigation << "\n";
+             << severity_str << " ALERT [" << vector << "]: " << msg << context << investigation << "\n";
     log_file.close();
   } else {
     // If we can't write to either location, ensure the error is visible
@@ -276,5 +312,116 @@ void RulesEngine::alert(const std::string &vector, const std::string &msg,
     }
 
     syslog(syslog_priority, "%s", full_msg.c_str());
+  }
+  
+  // 4. Send Desktop Notification (Visual Alert for Testing/Development)
+  // Filter: Only send desktop notifications for CRITICAL alerts (reduce notification fatigue)
+  if (NOTIFY_CRITICAL_ONLY) {
+    if (severity == AlertSeverity::CRITICAL) {
+      send_desktop_notification("[NoEsc] " + vector, msg, severity);
     }
+  } else {
+    // If filtering disabled, send all notifications
+    send_desktop_notification("[NoEsc] " + vector, msg, severity);
+  }
+}
+
+void RulesEngine::send_desktop_notification(const std::string& title, 
+                                            const std::string& body, 
+                                            AlertSeverity severity) {
+  // Determine notification urgency and icon based on severity
+  std::string urgency = "normal";
+  std::string icon = "dialog-warning";
+  
+  switch (severity) {
+    case AlertSeverity::CRITICAL:
+      urgency = "critical";
+      icon = "dialog-error";
+      break;
+    case AlertSeverity::WARNING:
+      urgency = "normal";
+      icon = "dialog-warning";
+      break;
+    case AlertSeverity::INFO:
+      urgency = "low";
+      icon = "dialog-information";
+      break;
+  }
+  
+  // Sanitize input to prevent command injection
+  std::string safe_title = title;
+  std::string safe_body = body;
+  
+  for (char& c : safe_title) {
+    if (c == '"' || c == '`' || c == '$' || c == '\\') c = '\'';
+  }
+  for (char& c : safe_body) {
+    if (c == '"' || c == '`' || c == '$' || c == '\\') c = '\'';
+  }
+  
+  // Truncate body if too long (notify-send has limits)
+  if (safe_body.length() > 200) {
+    safe_body = safe_body.substr(0, 197) + "...";
+  }
+  
+  // Check if running as root (getuid returns effective user ID)
+  if (getuid() == 0) {
+    // Running as root (daemon mode) - need to find user's session
+    
+    // Find the active graphical user
+    FILE* who_pipe = popen("who | grep '(:' | awk '{print $1}' | head -n1", "r");
+    if (!who_pipe) return;
+    
+    char username[256] = {0};
+    if (fgets(username, sizeof(username), who_pipe) == nullptr) {
+      pclose(who_pipe);
+      return;
+    }
+    pclose(who_pipe);
+    
+    // Remove newline
+    size_t len = strlen(username);
+    if (len > 0 && username[len-1] == '\n') {
+      username[len-1] = '\0';
+    }
+    
+    if (strlen(username) == 0) return;
+    
+    // Get user's UID
+    FILE* uid_pipe = popen(("id -u " + std::string(username)).c_str(), "r");
+    if (!uid_pipe) return;
+    
+    char uid_str[32] = {0};
+    if (fgets(uid_str, sizeof(uid_str), uid_pipe) == nullptr) {
+      pclose(uid_pipe);
+      return;
+    }
+    pclose(uid_pipe);
+    
+    // Build command to run as user with their DBUS session
+    std::string notify_cmd = 
+      "su " + std::string(username) + 
+      " -c 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/" + std::string(uid_str) +
+      "bus notify-send --urgency=" + urgency +
+      " --icon=" + icon +
+      " \"" + safe_title + "\"" +
+      " \"" + safe_body + "\"' 2>/dev/null &";
+    
+    system(notify_cmd.c_str());
+    
+  } else {
+    // Running as regular user (test mode) - direct notify-send
+    std::string notify_cmd = 
+      "notify-send --urgency=" + urgency +
+      " --icon=" + icon +
+      " \"" + safe_title + "\"" +
+      " \"" + safe_body + "\" 2>/dev/null &";
+    
+    system(notify_cmd.c_str());
+  }
+  
+  // Small delay to prevent notification overlap when multiple alerts trigger
+  // Most notification daemons need ~100ms to register and stack notifications
+  // This ensures each notification is visible and not replaced
+  usleep(150000); // 150ms delay
 }
