@@ -8,7 +8,7 @@
 // Global flag for graceful shutdown
 volatile sig_atomic_t running = 1;
 
-void signal_handler(int signum) { running = 0; }
+void signal_handler(int) { running = 0; }
 
 int main() {
   // Register signal handlers

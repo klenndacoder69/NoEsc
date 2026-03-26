@@ -1,6 +1,7 @@
 #include "rules_engine.h"
 #include <fstream>
 #include <iostream>
+#include <syslog.h>
 
 RulesEngine::RulesEngine() { load_config(); }
 
@@ -83,7 +84,7 @@ void RulesEngine::check_privilege_escalation(const LogEvent &event) {
 
     std::string msg = "SUID Abuse Detected! User " + std::to_string(event.auid) +
                       " escalated to ROOT via NON-STANDARD binary: " + event.exe;
-    alert("PrivilegeEscalation", msg, event);
+    alert("PrivilegeEscalation", msg, event, AlertSeverity::CRITICAL);
   }
 }
 
@@ -108,7 +109,7 @@ void RulesEngine::check_sensitive_access(const LogEvent &event) {
       std::string msg =
           "Unauthorized Modification Attempt! Non-Root User (EUID=" +
           std::to_string(event.euid) + ") modified a critical file.";
-      alert("SensitiveTampering", msg, event);
+      alert("SensitiveTampering", msg, event, AlertSeverity::CRITICAL);
     }
   }
 }
@@ -139,8 +140,8 @@ void RulesEngine::check_sudo_misuse(const LogEvent &event) {
   // 2. Get or create state for this user
   SudoState &state = sudo_scores[event.auid];
 
-  // 3. Time Decay: reset score on ANY event if more than 60s since last activity
-  if (state.last_event_time > 0 && (current_time - state.last_event_time) > 60) {
+  // 3. Time Decay: reset score on ANY event if more than SUDO_DECAY_WINDOW_SECS since last activity
+  if (state.last_event_time > 0 && (current_time - state.last_event_time) > SUDO_DECAY_WINDOW_SECS) {
     state.score = 0;
   }
   // Update timestamp on every event so decay window stays accurate
@@ -148,15 +149,15 @@ void RulesEngine::check_sudo_misuse(const LogEvent &event) {
 
   bool score_changed = false;
 
-  // 4. Rule A: Authentication Failure (+1 point)
+  // 4. Rule A: Authentication Failure (+SUDO_AUTH_FAIL_SCORE point)
   if (event.type == "USER_AUTH" || event.type == "USER_ERR") {
     if (event.res.find("failed") != std::string::npos) {
-      state.score += 1;
+      state.score += SUDO_AUTH_FAIL_SCORE;
       score_changed = true;
     }
   }
 
-  // 5. Rule B: Dangerous Command Executed as Root via Sudo (+5 points)
+  // 5. Rule B: Dangerous Command Executed as Root via Sudo (+SUDO_DANGEROUS_CMD_SCORE points)
   if (event.type == "SYSCALL" && event.euid == 0 && event.auid != 0 &&
       event.success == "yes") {
     const std::string &exe = event.exe;
@@ -175,7 +176,7 @@ void RulesEngine::check_sudo_misuse(const LogEvent &event) {
         exe == "/usr/bin/sh"       || exe == "/bin/sh"       ||
         exe == "/usr/bin/python3"  || exe == "/usr/bin/python") {
 
-      state.score += 5;
+      state.score += SUDO_DANGEROUS_CMD_SCORE;
       score_changed = true;
     }
   }
@@ -184,17 +185,17 @@ void RulesEngine::check_sudo_misuse(const LogEvent &event) {
 #ifdef DEBUG_SCORING
   if (score_changed) {
     std::cerr << "[~] SudoMisuse score for AUID=" << event.auid
-              << " -> " << state.score << "/20"
+              << " -> " << state.score << "/" << SUDO_ALERT_THRESHOLD
               << " (exe=" << event.exe << ")" << std::endl;
   }
 #endif
 
-  // 7. Threshold Check (Alert if >= 20)
-  if (score_changed && state.score >= 20) {
+  // 7. Threshold Check (Alert if >= SUDO_ALERT_THRESHOLD)
+  if (score_changed && state.score >= SUDO_ALERT_THRESHOLD) {
     std::string msg =
         "Stateful Sudo Misuse Detected! Suspicion Score reached " +
-        std::to_string(state.score) + "/20.";
-    alert("SudoMisuse", msg, event);
+        std::to_string(state.score) + "/" + std::to_string(SUDO_ALERT_THRESHOLD) + ".";
+    alert("SudoMisuse", msg, event, AlertSeverity::CRITICAL);
 
     // Reset score after alert to avoid log flooding
     state.score = 0;
@@ -202,7 +203,7 @@ void RulesEngine::check_sudo_misuse(const LogEvent &event) {
 }
 
 void RulesEngine::alert(const std::string &vector, const std::string &msg,
-                        const LogEvent &event) {
+                        const LogEvent &event, AlertSeverity severity) {
   // Construct a verbose, context-rich alert message
   std::string context =
       " | Rule_Key=" + event.key + " | User=" + std::to_string(event.auid) +
@@ -211,17 +212,53 @@ void RulesEngine::alert(const std::string &vector, const std::string &msg,
       " ppid=" + std::to_string(event.ppid) + ")" + " | Command=" + event.comm +
       " | Args=[" + event.a0 + ", " + event.a1 + ", " + event.a2 + "]";
 
+  // Add actionable investigation guidance for administrators
+  std::string investigation = " | INVESTIGATE: ausearch -p " + std::to_string(event.pid) + " -i";
+
+  std::string severity_str;
+  switch (severity) {
+    case AlertSeverity::INFO: severity_str = "INFO"; break;
+    case AlertSeverity::WARNING: severity_str = "WARNING"; break;
+    case AlertSeverity::CRITICAL: severity_str = "CRITICAL"; break;
+  }
+
+  std::string full_msg = "[" + severity_str + "] [" + vector + "] " + msg + context + investigation;
   // 1. Print to STDERR (Visible when running manually in the terminal for
   // testing)
   std::cerr << "[!] NoEsc ALERT [" << vector << "]: " << msg << context
-            << std::endl;
+            << investigation << std::endl;
 
   // 2. Append to Dedicated System Log File (For Daemon Mode)
   // Note: Daemon runs as root, so it has permission to write here.
   std::ofstream log_file("/var/log/noesc_alerts.log", std::ios_base::app);
   if (log_file.is_open()) {
     log_file << "[" << event.timestamp << "] "
-             << "ALERT [" << vector << "]: " << msg << context << "\n";
+             << "ALERT [" << vector << "]: " << msg << context << investigation << "\n";
     log_file.close();
+  } else {
+    // If we can't write to the dedicated log file, ensure the error is visible
+    std::cerr << "[!] WARNING: Failed to write alert to /var/log/noesc_alerts.log" << std::endl;
   }
+
+  if (severity >= AlertSeverity::WARNING) {
+    int syslog_priority;
+    switch (severity) {
+      case AlertSeverity::INFO:
+        syslog_priority = LOG_INFO;
+        break; 
+      case AlertSeverity::WARNING:
+        syslog_priority = LOG_WARNING;
+        break;
+      case AlertSeverity:: CRITICAL:
+        syslog_priority = LOG_CRIT;
+        break;
+    }
+    static bool syslog_opened = false;
+    if (!syslog_opened) {
+      openlog("noesc", LOG_PID | LOG_CONS, LOG_AUTH);
+      syslog_opened = true;
+    }
+
+    syslog(syslog_priority, "%s", full_msg.c_str());
+    }
 }

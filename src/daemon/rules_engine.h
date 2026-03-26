@@ -6,8 +6,20 @@
 #include <vector>
 #include <unordered_map>
 
+enum class AlertSeverity{
+    CRITICAL,
+    WARNING,
+    INFO
+};
+
 // Uncomment to enable per-event scoring debug output
 // #define DEBUG_SCORING
+
+// Configuration Constants
+static constexpr int SUDO_ALERT_THRESHOLD = 20;        // Score threshold for sudo misuse alert
+static constexpr long SUDO_DECAY_WINDOW_SECS = 60;     // Time window for score decay (seconds)
+static constexpr int SUDO_AUTH_FAIL_SCORE = 1;         // Score increment for auth failure
+static constexpr int SUDO_DANGEROUS_CMD_SCORE = 5;     // Score increment for dangerous command execution
 
 // Struct for Vector 2: Stateful Scoring
 struct SudoState {
@@ -46,8 +58,8 @@ private:
     // Vector 3: Pattern Matching
     void check_sensitive_access(const LogEvent& event);
     
-    // Helper to send alert (currently logs to stderr)
-    void alert(const std::string& vector, const std::string& msg, const LogEvent& event);
+    // Helper to send alert with severity level
+    void alert(const std::string& vector, const std::string& msg, const LogEvent& event, AlertSeverity severity);
 };
 
 #endif // RULES_ENGINE_H
