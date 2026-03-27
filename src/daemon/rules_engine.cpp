@@ -350,16 +350,16 @@ void RulesEngine::send_desktop_notification(const std::string& title,
     std::string notify_cmd = 
       "su " + std::string(username) + 
       " -c 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/" + std::string(uid_str) +
-      "bus notify-send --urgency=" + urgency +
+      "bus notify-send --app-name=NoEsc --urgency=" + urgency +
       " --icon=" + icon +
       " \"" + safe_title + "\"" +
       " \"" + safe_body + "\"' 2>/dev/null &";
     
     system(notify_cmd.c_str());
-    
+  
   } else {
     std::string notify_cmd = 
-      "notify-send --urgency=" + urgency +
+      "notify-send --app-name=NoEsc --urgency=" + urgency +
       " --icon=" + icon +
       " \"" + safe_title + "\"" +
       " \"" + safe_body + "\" 2>/dev/null &";
