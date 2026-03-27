@@ -54,7 +54,7 @@ private:
     std::vector<std::string> custom_whitelist;
     std::unordered_map<int, SudoState> sudo_scores;
     std::unordered_map<int, long> priv_esc_cooldown;
-    std::unordered_map<int, long> sensitive_cooldown;
+    std::unordered_map<std::string, long> sensitive_cooldown;
     
     static constexpr long ALERT_COOLDOWN_SECS = 10;
 

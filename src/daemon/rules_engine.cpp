@@ -125,15 +125,16 @@ void RulesEngine::check_sensitive_access(const LogEvent &event) {
 
   if (event.syscall_id == 257 || event.syscall == "openat") {
     if (event.euid != 0) {
+      std::string file_key = std::to_string(event.auid) + ":" + event.a0;
       long current_time = parse_timestamp(event.timestamp);
-      auto it = sensitive_cooldown.find(event.auid);
+      auto it = sensitive_cooldown.find(file_key);
       if (it != sensitive_cooldown.end() && current_time - it->second < ALERT_COOLDOWN_SECS)
         return;
-      sensitive_cooldown[event.auid] = current_time;
+      sensitive_cooldown[file_key] = current_time;
 
       std::string msg =
-          "Unauthorized Modification Attempt! Non-Root User (EUID=" +
-          std::to_string(event.euid) + ") modified a critical file.";
+          "User " + std::to_string(event.auid) + " (EUID=" + std::to_string(event.euid) + 
+          ") attempted to modify: " + event.a0;
       alert("SensitiveTampering", msg, event, AlertSeverity::CRITICAL);
     }
   }
