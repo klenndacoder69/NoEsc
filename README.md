@@ -50,6 +50,24 @@ g++ -std=c++17 src/daemon/main.cpp src/daemon/parser.cpp src/daemon/rules_engine
    sudo service auditd reload
    ```
 
+## Maintenance Mode (SudoMisuse Notifications)
+
+NoEsc supports an operator maintenance window for SudoMisuse desktop notifications.
+
+After installation, use:
+
+```bash
+sudo noesc-maint status
+sudo noesc-maint on 30m
+sudo noesc-maint on 1h30m
+sudo noesc-maint until "2026-03-30 23:30:00"
+sudo noesc-maint off
+```
+
+Notes:
+- The helper writes the TTL file used by the daemon: `/etc/noesc/sudo_maintenance_mode.until`.
+- The daemon checks this state periodically and suppresses SudoMisuse desktop popups while active.
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

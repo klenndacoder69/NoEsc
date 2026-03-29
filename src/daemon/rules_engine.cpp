@@ -437,7 +437,7 @@ void RulesEngine::alert(const std::string &vector, const std::string &msg,
     std::cerr << "[!] WARNING: Failed to write alert to log file" << std::endl;
   }
 
-  if (severity >= AlertSeverity::WARNING) {
+  if (severity == AlertSeverity::CRITICAL || severity == AlertSeverity::WARNING){
     int syslog_priority;
     switch (severity) {
     case AlertSeverity::INFO:

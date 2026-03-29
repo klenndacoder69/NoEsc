@@ -23,6 +23,10 @@ pkill noesc_daemon || true
 cp noesc_daemon /usr/local/bin/
 chmod +x /usr/local/bin/noesc_daemon
 
+echo "[*] Step 2b: Installing maintenance helper command..."
+cp scripts/noesc-maint.sh /usr/local/bin/noesc-maint
+chmod +x /usr/local/bin/noesc-maint
+
 echo "[*] Step 3: Installing configuration files..."
 mkdir -p /etc/noesc
 cp config/suid_whitelist.conf /etc/noesc/
@@ -53,5 +57,6 @@ echo "----------------------------------------------------"
 echo "[+] INSTALLATION COMPLETE!"
 echo "    - The daemon is now running silently in the background."
 echo "    - To edit whitelist:  nano /etc/noesc/suid_whitelist.conf"
+echo "    - Maintenance mode:   noesc-maint status|on 30m|off"
 echo "    - To view alerts:     cat /var/log/noesc_alerts.log"
 echo "----------------------------------------------------"
