@@ -1,5 +1,10 @@
-// Event.h central data structure (or the schema) containing the specifcs of an
-// audit log
+/*
+* Event.h central data structure (or the schema) containing the specifcs of an
+* audit log
+*
+*
+*/
+
 
 #ifndef EVENT_H
 #define EVENT_H
@@ -13,7 +18,7 @@
 
 struct LogEvent {
 
-  // Meta Information
+  // meta information
   std::string raw_log;
   std::string timestamp;
   std::string serial; // used to grp logs
@@ -43,7 +48,7 @@ struct LogEvent {
   std::string exe;
   std::string cwd;
   std::string comm;
-  std::string proctitle; // Full command line (if available in PROCTITLE record)
+  std::string proctitle; 
   std::string a0;
   std::string a1;
   std::string a2;

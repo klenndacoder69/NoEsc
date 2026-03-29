@@ -1,3 +1,19 @@
+/*
+ * NoEsc - Audit Log Parser
+ *
+ * Stateless parser for auditd event streams.
+ * Extracts key fields from audit log strings without state aggregation.
+ *
+ * Supported Event Types:
+ *   - SYSCALL (process execution, syscall data)
+ *   - USER_CMD (sudo commands)
+ *   - USER_AUTH (authentication attempts)
+ *
+ * Known Limitation:
+ *   PATH records (containing filenames) are not linked to SYSCALL records.
+ *   Use audit keys and event IDs for forensic correlation.
+ */
+
 #ifndef PARSER_H
 #define PARSER_H
 
@@ -6,28 +22,11 @@
 
 class AuditParser {
 public:
-  /**
-   * Parses a raw audit log string into a LogEvent structure.
-   * @param line The raw string from STDIN.
-   * @param event Reference to the event object to populate.
-   * @return true if parsing was successful and event is relevant, false
-   * otherwise.
-   */
   static bool parse_line(const std::string &line, LogEvent &event);
 
 private:
-  /**
-   * Extracts a string value for a given key.
-   * Handles unquoted and quoted values (basic support).
-   */
-  static std::string extract_value(const std::string &line,
-                                   const std::string &key);
-
-  /**
-   * Extracts an integer value for a given key.
-   * Returns -1 if key not found or invalid.
-   */
+  static std::string extract_value(const std::string &line, const std::string &key);
   static int extract_int(const std::string &line, const std::string &key);
 };
 
-#endif // PARSER_H
+#endif
