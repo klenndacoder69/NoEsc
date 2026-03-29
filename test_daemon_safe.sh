@@ -44,7 +44,11 @@ echo "[2/3] Executing attack (running SUID binary)..."
 
 echo "[3/3] Checking NoEsc detection..."
 echo ""
+#Why chmod u+s alone usually does not notify:
 
+# chmod only sets the setuid bit. It does not make the binary root-owned.
+# If owner is still your user, executing it sets EUID to that owner (still non-root), so the privilege-escalation condition is false.
+# In short: no EUID transition to 0, no SUID-abuse alert.
 # Get recent audit events (last 2 minutes)
 START_TIME=$(date -d '2 minutes ago' +%H:%M:%S)
 
