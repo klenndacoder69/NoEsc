@@ -56,9 +56,10 @@ else
 fi
 echo ""
 echo "Desktop notification expectation (if not in maintenance mode):"
-echo "  1) First CRITICAL popup shown"
-echo "  2) Next CRITICAL in same 30s window suppressed"
-echo "  3) After rollover: one Burst Summary popup + one CRITICAL popup"
+echo "  1) First CRITICAL popup shown once at burst start"
+echo "  2) All subsequent CRITICALs are suppressed and aggregated"
+echo "  3) One summary popup appears when the burst episode ends"
+echo "     (quiet gap >= window) or at stream-end flush"
 echo ""
 echo "Tip: make sure maintenance mode file is absent or expired:"
 echo "  /etc/noesc/sudo_maintenance_mode.until"

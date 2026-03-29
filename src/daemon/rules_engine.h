@@ -47,7 +47,7 @@ struct SudoState {
 };
 
 struct SudoNotifyBurstState {
-  long window_start = 0;
+  long last_critical_time = 0;
   int suppressed_count = 0;
 };
 
@@ -55,6 +55,7 @@ class RulesEngine {
 public:
   RulesEngine();
   void evaluate(const LogEvent &event);
+  void flush_pending_sudo_burst_summaries();
 
 private:
   std::vector<std::string> custom_whitelist;

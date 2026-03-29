@@ -52,5 +52,7 @@ int main() {
     }
   }
 
+  engine.flush_pending_sudo_burst_summaries();
+
   return 0;
 }

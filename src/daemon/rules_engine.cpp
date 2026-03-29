@@ -9,9 +9,19 @@
  *    Whitelist: System paths + config/suid_whitelist.conf
  *
  * 2. Sudo Misuse (check_sudo_misuse):
- *    Stateful scoring: auth failures (+1), dangerous commands (+5).
+ *    Stateful scoring:
+ *      - auth failures (+1)
+ *      - dangerous sudo command launches (+5) for exec-like launch events
+ *        (benign_exec key or execve syscall fallback)
  *    Progressive thresholds: 15=WARNING, 20=CRITICAL.
- *    60-second decay window, score resets after alert.
+ *    60-second decay window, score resets after CRITICAL alert.
+ *
+ *    Notification behavior (SudoMisuse only):
+ *      - first CRITICAL in an episode is shown immediately
+ *      - subsequent CRITICALs in the same episode are suppressed and counted
+ *      - a summary notification is emitted when the episode ends
+ *        (quiet gap >= SUDO_NOTIFICATION_BURST_WINDOW_SECS)
+ *      - pending suppressed alerts are also summarized at EOF/shutdown flush
  *
  * 3. Sensitive File Tampering (check_sensitive_access):
  *    Pattern matching on audit keys (identitychange, sudochange).
@@ -166,7 +176,7 @@ void RulesEngine::maybe_send_sudo_notification(const std::string &title,
 
   if (is_maintenance_mode_active(current_time)) {
     SudoNotifyBurstState &burst = sudo_notify_burst[event.auid];
-    burst.window_start = current_time;
+    burst.last_critical_time = 0;
     burst.suppressed_count = 0;
     return;
   }
@@ -178,10 +188,12 @@ void RulesEngine::maybe_send_sudo_notification(const std::string &title,
 
   SudoNotifyBurstState &burst = sudo_notify_burst[event.auid];
 
-  if (burst.window_start == 0 ||
-      current_time - burst.window_start >=
-          SUDO_NOTIFICATION_BURST_WINDOW_SECS) {
-    if (burst.window_start != 0 && burst.suppressed_count > 0) {
+  bool new_episode = burst.last_critical_time == 0 ||
+                     current_time - burst.last_critical_time >=
+                         SUDO_NOTIFICATION_BURST_WINDOW_SECS;
+
+  if (new_episode) {
+    if (burst.suppressed_count > 0) {
       std::string summary =
           "High-frequency sudo activity: suppressed " +
           std::to_string(burst.suppressed_count) +
@@ -191,13 +203,38 @@ void RulesEngine::maybe_send_sudo_notification(const std::string &title,
                                 AlertSeverity::WARNING);
     }
 
-    burst.window_start = current_time;
     burst.suppressed_count = 0;
+    burst.last_critical_time = current_time;
     send_desktop_notification(title, body, severity);
     return;
   }
 
   burst.suppressed_count++;
+  burst.last_critical_time = current_time;
+}
+
+void RulesEngine::flush_pending_sudo_burst_summaries() {
+  long current_time = static_cast<long>(time(nullptr));
+  bool maintenance_active = is_maintenance_mode_active(current_time);
+
+  for (auto &entry : sudo_notify_burst) {
+    int auid = entry.first;
+    SudoNotifyBurstState &burst = entry.second;
+
+    if (burst.suppressed_count > 0 && !maintenance_active) {
+      std::string summary =
+          "High-frequency sudo activity: suppressed " +
+          std::to_string(burst.suppressed_count) +
+          " additional CRITICAL alerts in the last " +
+          std::to_string(SUDO_NOTIFICATION_BURST_WINDOW_SECS) +
+          "s before stream end (user " + std::to_string(auid) + ").";
+      send_desktop_notification("[NoEsc] SudoMisuse (Final Burst Summary)",
+                                summary, AlertSeverity::WARNING);
+    }
+
+    burst.suppressed_count = 0;
+    burst.last_critical_time = 0;
+  }
 }
 
 /*
@@ -279,7 +316,19 @@ void RulesEngine::check_sensitive_access(const LogEvent &event) {
 
 /*
  * Vector 2: Stateful Sudo Misuse Detection
- * Scoring system with progressive thresholds
+ *
+ * Current implementation summary:
+ *   - Score sources:
+ *       USER_AUTH failed => +1
+ *       dangerous sudo exec launch => +5
+ *   - Thresholds:
+ *       WARNING at 15, CRITICAL at 20
+ *   - Reset semantics:
+ *       score decays to 0 after 60s inactivity
+ *       score resets to 0 after CRITICAL alert emission
+ *   - Desktop notification policy for SudoMisuse CRITICAL:
+ *       first CRITICAL is shown immediately
+ *       additional CRITICALs are aggregated and summarized at burst end/flush
  */
 void RulesEngine::check_sudo_misuse(const LogEvent &event) {
   if (event.auid == -1 || event.auid == 0)
