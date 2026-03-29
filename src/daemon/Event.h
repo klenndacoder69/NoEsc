@@ -1,5 +1,10 @@
-// Event.h central data structure (or the schema) containing the specifcs of an
-// audit log
+/*
+* Event.h central data structure (or the schema) containing the specifcs of an
+* audit log
+*
+*
+*/
+
 
 #ifndef EVENT_H
 #define EVENT_H

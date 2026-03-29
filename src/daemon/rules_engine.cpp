@@ -25,6 +25,9 @@
  */
 
 #include "rules_engine.h"
+#include <algorithm>
+#include <cctype>
+#include <ctime>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -80,6 +83,121 @@ void RulesEngine::evaluate(const LogEvent &event) {
     check_sensitive_access(event);
   }
   check_sudo_misuse(event);
+}
+
+bool RulesEngine::is_sudo_exec_launch_event(const LogEvent &event) const {
+  if (event.type != "SYSCALL" || event.success != "yes")
+    return false;
+
+  if (event.key == "benign_exec")
+    return true;
+
+  return event.syscall_id == 59 || event.syscall_id == 322;
+}
+
+bool RulesEngine::is_dangerous_sudo_exe(const std::string &exe) const {
+  return exe == "/usr/bin/chmod" || exe == "/bin/chmod" ||
+         exe == "/usr/bin/chown" || exe == "/bin/chown" ||
+         exe == "/usr/bin/cp" || exe == "/bin/cp" ||
+         exe == "/usr/bin/systemctl" || exe == "/bin/systemctl" ||
+         exe == "/usr/bin/passwd" || exe == "/usr/sbin/useradd" ||
+         exe == "/usr/bin/useradd" || exe == "/usr/sbin/usermod" ||
+         exe == "/usr/bin/usermod" || exe == "/usr/sbin/visudo" ||
+         exe == "/usr/bin/visudo" || exe == "/usr/bin/bash" ||
+         exe == "/bin/bash" || exe == "/usr/bin/sh" || exe == "/bin/sh" ||
+         exe == "/usr/bin/python3" || exe == "/usr/bin/python";
+}
+
+bool RulesEngine::is_maintenance_mode_active(long current_time) {
+  if (current_time <= 0) {
+    current_time = static_cast<long>(time(nullptr));
+  }
+
+  if (maintenance_mode_cache_check > 0 &&
+      current_time - maintenance_mode_cache_check <
+          MAINTENANCE_CACHE_REFRESH_SECS) {
+    return maintenance_mode_until > current_time;
+  }
+
+  maintenance_mode_cache_check = current_time;
+  maintenance_mode_until = 0;
+
+  std::ifstream file(SUDO_MAINTENANCE_MODE_FILE);
+  if (!file.is_open())
+    return false;
+
+  std::string line;
+  if (!std::getline(file, line))
+    return false;
+
+  line.erase(std::remove_if(line.begin(), line.end(), [](unsigned char ch) {
+               return std::isspace(ch);
+             }),
+             line.end());
+
+  if (line.empty())
+    return false;
+
+  const std::string prefix = "until_epoch=";
+  if (line.find(prefix) == 0) {
+    line = line.substr(prefix.length());
+  }
+
+  try {
+    maintenance_mode_until = std::stol(line);
+  } catch (...) {
+    maintenance_mode_until = 0;
+  }
+
+  return maintenance_mode_until > current_time;
+}
+
+void RulesEngine::maybe_send_sudo_notification(const std::string &title,
+                                               const std::string &body,
+                                               const LogEvent &event,
+                                               AlertSeverity severity) {
+  if (NOTIFY_CRITICAL_ONLY && severity != AlertSeverity::CRITICAL)
+    return;
+
+  long current_time = parse_timestamp(event.timestamp);
+  if (current_time <= 0) {
+    current_time = static_cast<long>(time(nullptr));
+  }
+
+  if (is_maintenance_mode_active(current_time)) {
+    SudoNotifyBurstState &burst = sudo_notify_burst[event.auid];
+    burst.window_start = current_time;
+    burst.suppressed_count = 0;
+    return;
+  }
+
+  if (severity != AlertSeverity::CRITICAL) {
+    send_desktop_notification(title, body, severity);
+    return;
+  }
+
+  SudoNotifyBurstState &burst = sudo_notify_burst[event.auid];
+
+  if (burst.window_start == 0 ||
+      current_time - burst.window_start >=
+          SUDO_NOTIFICATION_BURST_WINDOW_SECS) {
+    if (burst.window_start != 0 && burst.suppressed_count > 0) {
+      std::string summary =
+          "High-frequency sudo activity: suppressed " +
+          std::to_string(burst.suppressed_count) +
+          " additional CRITICAL alerts in the last " +
+          std::to_string(SUDO_NOTIFICATION_BURST_WINDOW_SECS) + "s.";
+      send_desktop_notification(title + " (Burst Summary)", summary,
+                                AlertSeverity::WARNING);
+    }
+
+    burst.window_start = current_time;
+    burst.suppressed_count = 0;
+    send_desktop_notification(title, body, severity);
+    return;
+  }
+
+  burst.suppressed_count++;
 }
 
 /*
@@ -181,19 +299,10 @@ void RulesEngine::check_sudo_misuse(const LogEvent &event) {
     score_changed = true;
   }
 
-  if (event.type == "SYSCALL" && event.euid == 0 && event.auid != 0 &&
-      event.success == "yes") {
+  if (event.euid == 0 && event.auid != 0 &&
+      is_sudo_exec_launch_event(event)) {
     const std::string &exe = event.exe;
-    if (exe == "/usr/bin/chmod" || exe == "/bin/chmod" ||
-        exe == "/usr/bin/chown" || exe == "/bin/chown" ||
-        exe == "/usr/bin/cp" || exe == "/bin/cp" ||
-        exe == "/usr/bin/systemctl" || exe == "/bin/systemctl" ||
-        exe == "/usr/bin/passwd" || exe == "/usr/sbin/useradd" ||
-        exe == "/usr/bin/useradd" || exe == "/usr/sbin/usermod" ||
-        exe == "/usr/bin/usermod" || exe == "/usr/sbin/visudo" ||
-        exe == "/usr/bin/visudo" || exe == "/usr/bin/bash" ||
-        exe == "/bin/bash" || exe == "/usr/bin/sh" || exe == "/bin/sh" ||
-        exe == "/usr/bin/python3" || exe == "/usr/bin/python") {
+    if (is_dangerous_sudo_exe(exe)) {
 
       state.score += SUDO_DANGEROUS_CMD_SCORE;
       score_changed = true;
@@ -301,12 +410,16 @@ void RulesEngine::alert(const std::string &vector, const std::string &msg,
     syslog(syslog_priority, "%s", full_msg.c_str());
   }
 
-  if (NOTIFY_CRITICAL_ONLY) {
-    if (severity == AlertSeverity::CRITICAL) {
+  if (vector == "SudoMisuse") {
+    maybe_send_sudo_notification("[NoEsc] " + vector, msg, event, severity);
+  } else {
+    if (NOTIFY_CRITICAL_ONLY) {
+      if (severity == AlertSeverity::CRITICAL) {
+        send_desktop_notification("[NoEsc] " + vector, msg, severity);
+      }
+    } else {
       send_desktop_notification("[NoEsc] " + vector, msg, severity);
     }
-  } else {
-    send_desktop_notification("[NoEsc] " + vector, msg, severity);
   }
 }
 
