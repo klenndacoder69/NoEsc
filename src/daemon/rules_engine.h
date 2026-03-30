@@ -17,6 +17,10 @@
  *   SUDO_DECAY_WINDOW_SECS: Score resets after 60s inactivity
  *   ALERT_COOLDOWN_SECS: Rate limit duplicate alerts (10s)
  *   NOTIFY_CRITICAL_ONLY: Filter desktop notifications
+ *   NOTIFICATION_DELAY: Delay for desktop notifications (ms)
+ *   SUDO_NOTIFICATION_BURST_WINDOW_SECS: Window to aggregate sudo misuse alerts (30s)
+ *   MAINTENANCE_CACHE_REFRESH_SECS: Cache duration for maintenance mode check (5s)
+ *   SUDO_MAINTENANCE_MODE_FILE: File that indicates sudo maintenance mode (suppressing sudo misuse notifications)
  */
 
 #ifndef RULES_ENGINE_H

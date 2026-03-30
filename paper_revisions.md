@@ -378,3 +378,6 @@ These enhancements address **real-world deployment challenges** in academic HIDS
 4. Integration with existing enterprise monitoring infrastructure
 
 **Recommendation:** Add a subsection titled "Alert Fatigue Mitigation Strategies" in the paper discussing how context-aware severity and progressive alerting reduce false positive impact while maintaining detection coverage.
+
+**whenever you need clarification or you are losing paper direction**:
+NoEsc assumes initial host access by an adversary and focuses on detecting post-compromise privilege escalation and sensitive tampering attempts.
