@@ -67,6 +67,7 @@ bool AuditParser::parse_line(const std::string &line, LogEvent &event) {
   if (event.type.empty())
     return false;
 
+  event.syscall = extract_value(line, "syscall");
   event.syscall_id = extract_int(line, "syscall");
   event.auid = extract_int(line, "auid");
   event.euid = extract_int(line, "euid");

@@ -35,7 +35,7 @@ make
 
 **Option 2: Using G++ Directly**
 ```bash
-g++ -std=c++17 src/daemon/main.cpp src/daemon/parser.cpp src/daemon/rules_engine.cpp -o noesc_daemon -I src/daemon
+g++ -std=c++17 src/daemon/main.cpp src/daemon/parser.cpp src/daemon/rules_engine.cpp src/daemon/uds_bridge.cpp -o noesc_daemon -I src/daemon
 ```
 
 ## Configuration

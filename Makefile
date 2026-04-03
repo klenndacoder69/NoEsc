@@ -3,7 +3,7 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -I src/daemon
 TARGET = noesc_daemon
-SOURCES = src/daemon/main.cpp src/daemon/parser.cpp src/daemon/rules_engine.cpp
+SOURCES = src/daemon/main.cpp src/daemon/parser.cpp src/daemon/rules_engine.cpp src/daemon/uds_bridge.cpp
 
 # Default target
 all: $(TARGET)

@@ -14,7 +14,7 @@
  *      - dangerous sudo command launches (+5) for exec-like launch events
  *        (benign_exec key or execve syscall fallback)
  *    Progressive thresholds: 15=WARNING, 20=CRITICAL.
- *    60-second decay window, score resets after CRITICAL alert.
+ *    30-second decay window, score resets after CRITICAL alert.
  *
  *    Notification behavior (SudoMisuse only):
  *      - first CRITICAL in an episode is shown immediately

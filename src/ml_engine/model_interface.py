@@ -1,29 +1,196 @@
-# NoEsc Machine Learning Engine Interface
-# This module will handle the loading of the SVM model and inference.
+"""NoEsc Machine Learning Engine Interface.
 
-import sys
+Current stage: receive parsed audit events over a Unix datagram socket,
+buffer per-process syscall windows, and print pid-aware sequence n-grams.
+"""
+
+import json
 import os
+import signal
+import socket
+import time
+from collections import deque
+from typing import Deque, Dict, List, Tuple
+
+SOCKET_PATH = "/tmp/noesc_ml.sock"
+RECV_BUFFER_SIZE = 65535
+WINDOW_SECONDS = 2.0
+NGRAM_SIZE = 3
+
+REQUIRED_FIELDS = ("syscall", "auid", "euid", "exe", "pid")
+
 
 class NoEscModel:
-    def __init__(self, model_path="model.pkl"):
+    def __init__(self, model_path: str = "model.pkl"):
         self.model_path = model_path
         self.model = None
-        # self.load_model()
 
-    def load_model(self):
+    def load_model(self) -> None:
         print(f"[*] Loading SVM model from {self.model_path}")
-        # TODO: Implement joblib/pickle load
-        pass
+        # TODO: Implement joblib/pickle load.
 
-    def predict(self, features):
-        """
-        Args:
-            features (list): Extracted feature vector from C++ daemon
-        Returns:
-            int: 0 for Benign, 1 for Malicious
-        """
-        # Placeholder
+    def predict(self, features: List[float]) -> int:
+        """Return 0 (benign) or 1 (malicious)."""
+        _ = features
         return 0
 
+
+class SequenceBuffer:
+    def __init__(self, window_seconds: float, ngram_size: int):
+        self.window_seconds = window_seconds
+        self.ngram_size = ngram_size
+        self.by_pid: Dict[str, Dict[str, object]] = {}
+
+    def add_event(self, event: Dict[str, str]) -> None:
+        now = time.monotonic()
+        pid = event["pid"]
+
+        if pid not in self.by_pid:
+            self.by_pid[pid] = {
+                "events": deque(),
+                "auid": event["auid"],
+                "euid": event["euid"],
+                "exe": event["exe"],
+                "last_update": now,
+            }
+
+        state = self.by_pid[pid]
+        events = state["events"]
+        if not isinstance(events, deque):
+            return
+
+        events.append((now, event["syscall"]))
+        state["auid"] = event["auid"]
+        state["euid"] = event["euid"]
+        state["exe"] = event["exe"]
+        state["last_update"] = now
+
+        self._prune_old(events, now)
+
+    def flush_expired(self, force: bool = False) -> None:
+        now = time.monotonic()
+        to_remove: List[str] = []
+
+        for pid, state in self.by_pid.items():
+            events = state.get("events")
+            if not isinstance(events, deque):
+                to_remove.append(pid)
+                continue
+
+            if not events:
+                to_remove.append(pid)
+                continue
+
+            last_update = state.get("last_update", now)
+            if not isinstance(last_update, float):
+                last_update = now
+
+            idle_seconds = now - last_update
+            if force or idle_seconds >= self.window_seconds:
+                seq = [syscall for _, syscall in events]
+                self._print_sequence(
+                    pid=pid,
+                    auid=str(state.get("auid", "")),
+                    euid=str(state.get("euid", "")),
+                    exe=str(state.get("exe", "")),
+                    seq=seq,
+                )
+                to_remove.append(pid)
+
+        for pid in to_remove:
+            self.by_pid.pop(pid, None)
+
+    def _prune_old(self, events: Deque[Tuple[float, str]], now: float) -> None:
+        while events and (now - events[0][0]) > self.window_seconds:
+            events.popleft()
+
+    def _print_sequence(
+        self, pid: str, auid: str, euid: str, exe: str, seq: List[str]
+    ) -> None:
+        if not seq:
+            return
+
+        joined_seq = " ".join(seq)
+        print(
+            f"[ML-SEQ] pid={pid} auid={auid} euid={euid} exe={exe} seq={joined_seq}",
+            flush=True,
+        )
+
+        if len(seq) >= self.ngram_size:
+            ngrams = [
+                "|".join(seq[i : i + self.ngram_size])
+                for i in range(len(seq) - self.ngram_size + 1)
+            ]
+            print(
+                f"[ML-NGRAM] pid={pid} n={self.ngram_size} grams={ngrams}",
+                flush=True,
+            )
+
+
+def normalize_event(payload: Dict[str, object]) -> Dict[str, str]:
+    return {field: str(payload.get(field, "")) for field in REQUIRED_FIELDS}
+
+
+def remove_stale_socket(socket_path: str) -> None:
+    if os.path.exists(socket_path):
+        os.unlink(socket_path)
+
+
+def run_listener(socket_path: str = SOCKET_PATH) -> None:
+    remove_stale_socket(socket_path)
+
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    sock.bind(socket_path)
+    sock.setblocking(False)
+
+    print(f"[*] NoEsc ML listener bound at {socket_path}", flush=True)
+
+    keep_running = {"value": True}
+
+    def _stop_listener(_signum: int, _frame) -> None:
+        keep_running["value"] = False
+
+    signal.signal(signal.SIGINT, _stop_listener)
+    signal.signal(signal.SIGTERM, _stop_listener)
+
+    buffer = SequenceBuffer(window_seconds=WINDOW_SECONDS, ngram_size=NGRAM_SIZE)
+
+    try:
+        while keep_running["value"]:
+            try:
+                raw_data = sock.recv(RECV_BUFFER_SIZE)
+            except BlockingIOError:
+                buffer.flush_expired(force=False)
+                time.sleep(0.05)
+                continue
+            except InterruptedError:
+                continue
+            except OSError as exc:
+                print(f"[!] ML listener socket error: {exc}", flush=True)
+                break
+
+            if not raw_data:
+                continue
+
+            try:
+                payload = json.loads(raw_data.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                print(f"[!] Dropping malformed ML payload: {exc}", flush=True)
+                continue
+
+            if not isinstance(payload, dict):
+                print("[!] Dropping non-object ML payload", flush=True)
+                continue
+
+            event = normalize_event(payload)
+            buffer.add_event(event)
+            buffer.flush_expired(force=False)
+    finally:
+        buffer.flush_expired(force=True)
+        sock.close()
+        remove_stale_socket(socket_path)
+        print("[*] NoEsc ML listener stopped", flush=True)
+
+
 if __name__ == "__main__":
-    print("[*] NoEsc ML Engine Standalone Test")
+    run_listener()

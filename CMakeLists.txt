@@ -9,6 +9,7 @@ set(SOURCES
     src/daemon/main.cpp
     src/daemon/parser.cpp
     src/daemon/rules_engine.cpp
+    src/daemon/uds_bridge.cpp
 )
 
 # header files
@@ -16,6 +17,7 @@ set(HEADERS
     src/daemon/Event.h
     src/daemon/parser.h
     src/daemon/rules_engine.h
+    src/daemon/uds_bridge.h
 )
 
 # making the executables

@@ -20,6 +20,7 @@
 
 #include "parser.h"
 #include "rules_engine.h"
+#include "uds_bridge.h"
 #include <csignal>
 #include <iostream>
 #include <string>
@@ -36,8 +37,11 @@ int main() {
   signal(SIGINT, signal_handler);
 
   RulesEngine engine;
+  UdsBridge ml_bridge;
   LogEvent event;
   std::string line;
+
+  ml_bridge.initialize();
 
   std::ios_base::sync_with_stdio(false);
   std::cin.tie(NULL);
@@ -45,6 +49,7 @@ int main() {
   while (running && std::getline(std::cin, line)) {
     try {
       if (AuditParser::parse_line(line, event)) {
+        ml_bridge.send_event(event);
         engine.evaluate(event);
       }
     } catch (const std::exception &e) {
@@ -53,6 +58,7 @@ int main() {
   }
 
   engine.flush_pending_sudo_burst_summaries();
+  ml_bridge.shutdown();
 
   return 0;
 }
