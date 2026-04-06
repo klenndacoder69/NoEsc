@@ -32,7 +32,23 @@ void signal_handler(int) {
   running = 0; 
 }
 
-int main() {
+int main(int argc, char **argv) {
+  bool dump_json_mode = false;
+
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg == "--dump-json") {
+      dump_json_mode = true;
+    } else if (arg == "-h" || arg == "--help") {
+      std::cerr << "Usage: " << argv[0] << " [--dump-json]" << std::endl;
+      return 0;
+    } else {
+      std::cerr << "[!] Unknown argument: " << arg << std::endl;
+      std::cerr << "Usage: " << argv[0] << " [--dump-json]" << std::endl;
+      return 1;
+    }
+  }
+
   signal(SIGTERM, signal_handler);
   signal(SIGINT, signal_handler);
 
@@ -41,7 +57,9 @@ int main() {
   LogEvent event;
   std::string line;
 
-  ml_bridge.initialize();
+  if (!dump_json_mode) {
+    ml_bridge.initialize();
+  }
 
   std::ios_base::sync_with_stdio(false);
   std::cin.tie(NULL);
@@ -49,7 +67,11 @@ int main() {
   while (running && std::getline(std::cin, line)) {
     try {
       if (AuditParser::parse_line(line, event)) {
-        ml_bridge.send_event(event);
+        if (dump_json_mode) {
+          ml_bridge.dump_event_json_stdout(event);
+        } else {
+          ml_bridge.send_event(event);
+        }
         engine.evaluate(event);
       }
     } catch (const std::exception &e) {
@@ -58,7 +80,9 @@ int main() {
   }
 
   engine.flush_pending_sudo_burst_summaries();
-  ml_bridge.shutdown();
+  if (!dump_json_mode) {
+    ml_bridge.shutdown();
+  }
 
   return 0;
 }

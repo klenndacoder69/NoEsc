@@ -41,6 +41,11 @@ public:
   // Any send failure is handled internally; caller should continue processing.
   void send_event(const LogEvent &event);
 
+  // Offline dataset mode helper:
+  // Serialize one event and emit it as a single JSON line to stdout.
+  // This path does not require socket initialization.
+  void dump_event_json_stdout(const LogEvent &event) const;
+
 private:
   // Minimum interval between repeated "ML Bridge Offline" stderr messages.
   static constexpr long OFFLINE_LOG_COOLDOWN_SECS = 60;

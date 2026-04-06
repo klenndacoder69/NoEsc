@@ -121,6 +121,13 @@ void UdsBridge::send_event(const LogEvent &event) {
   }
 }
 
+// Dump one serialized event as JSON to stdout (newline-delimited JSON).
+// Used by offline conversion mode to avoid socket drops during high-throughput
+// batch parsing.
+void UdsBridge::dump_event_json_stdout(const LogEvent &event) const {
+  std::cout << build_payload_json(event) << '\n';
+}
+
 // Classify errno values that represent offline/unavailable receiver states.
 bool UdsBridge::is_offline_error(int errnum) const {
   if (errnum == EAGAIN || errnum == ENOENT || errnum == ECONNREFUSED) {
