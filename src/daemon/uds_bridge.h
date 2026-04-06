@@ -74,7 +74,7 @@ private:
   void maybe_log_offline(int errnum);
 
   // Builds fixed JSON contract payload:
-  // {"syscall":"...","auid":"...","euid":"...","exe":"...","pid":"..."}
+  // {"syscall":"...","auid":"...","euid":"...","exe":"...","pid":"...","timestamp":"..."}
   std::string build_payload_json(const LogEvent &event) const;
 
   // Escapes characters so strings are valid JSON values.

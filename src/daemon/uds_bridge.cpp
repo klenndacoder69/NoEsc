@@ -177,7 +177,8 @@ std::string UdsBridge::build_payload_json(const LogEvent &event) const {
        << "\"auid\":\"" << escape_json(std::to_string(event.auid))
        << "\"," << "\"euid\":\"" << escape_json(std::to_string(event.euid))
        << "\"," << "\"exe\":\"" << escape_json(event.exe) << "\","
-       << "\"pid\":\"" << escape_json(std::to_string(event.pid)) << "\""
+      << "\"pid\":\"" << escape_json(std::to_string(event.pid)) << "\","
+      << "\"timestamp\":\"" << escape_json(event.timestamp) << "\""
        << "}";
   return json.str();
 }
