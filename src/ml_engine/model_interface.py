@@ -1,7 +1,8 @@
 """NoEsc Machine Learning Engine Interface.
 
 Current stage: receive parsed audit events over a Unix datagram socket,
-buffer per-process syscall windows, and print pid-aware sequence n-grams.
+buffer per-process syscall windows, track USER_AUTH context counts,
+and print pid-aware sequence n-grams.
 """
 
 import json
@@ -17,7 +18,9 @@ RECV_BUFFER_SIZE = 65535
 WINDOW_SECONDS = 2.0
 NGRAM_SIZE = 3
 
-REQUIRED_FIELDS = ("syscall", "auid", "euid", "exe", "pid")
+SUPPORTED_EVENT_TYPES = {"SYSCALL", "USER_AUTH"}
+
+REQUIRED_FIELDS = ("type", "syscall", "res", "auid", "euid", "exe", "pid", "timestamp")
 
 
 class NoEscModel:
@@ -44,6 +47,12 @@ class SequenceBuffer:
     def add_event(self, event: Dict[str, str]) -> None:
         now = time.monotonic()
         pid = event["pid"]
+        if not pid:
+            return
+
+        event_type = event.get("type", "")
+        if event_type not in SUPPORTED_EVENT_TYPES:
+            return
 
         if pid not in self.by_pid:
             self.by_pid[pid] = {
@@ -51,6 +60,8 @@ class SequenceBuffer:
                 "auid": event["auid"],
                 "euid": event["euid"],
                 "exe": event["exe"],
+                "auth_total_count": 0,
+                "auth_failed_count": 0,
                 "last_update": now,
             }
 
@@ -59,10 +70,19 @@ class SequenceBuffer:
         if not isinstance(events, deque):
             return
 
-        events.append((now, event["syscall"]))
+        if event_type == "SYSCALL":
+            syscall = event.get("syscall", "")
+            if syscall:
+                events.append((now, syscall))
+        elif event_type == "USER_AUTH":
+            state["auth_total_count"] = int(state.get("auth_total_count", 0)) + 1
+            if event.get("res", "").lower() == "failed":
+                state["auth_failed_count"] = int(state.get("auth_failed_count", 0)) + 1
+
         state["auid"] = event["auid"]
         state["euid"] = event["euid"]
-        state["exe"] = event["exe"]
+        if event["exe"]:
+            state["exe"] = event["exe"]
         state["last_update"] = now
 
         self._prune_old(events, now)
@@ -77,13 +97,15 @@ class SequenceBuffer:
                 to_remove.append(pid)
                 continue
 
-            if not events:
-                to_remove.append(pid)
-                continue
-
             last_update = state.get("last_update", now)
             if not isinstance(last_update, float):
                 last_update = now
+
+            if not events:
+                idle_seconds = now - last_update
+                if force or idle_seconds >= self.window_seconds:
+                    to_remove.append(pid)
+                continue
 
             idle_seconds = now - last_update
             if force or idle_seconds >= self.window_seconds:
@@ -94,6 +116,8 @@ class SequenceBuffer:
                     euid=str(state.get("euid", "")),
                     exe=str(state.get("exe", "")),
                     seq=seq,
+                    auth_total_count=int(state.get("auth_total_count", 0)),
+                    auth_failed_count=int(state.get("auth_failed_count", 0)),
                 )
                 to_remove.append(pid)
 
@@ -105,14 +129,24 @@ class SequenceBuffer:
             events.popleft()
 
     def _print_sequence(
-        self, pid: str, auid: str, euid: str, exe: str, seq: List[str]
+        self,
+        pid: str,
+        auid: str,
+        euid: str,
+        exe: str,
+        seq: List[str],
+        auth_total_count: int,
+        auth_failed_count: int,
     ) -> None:
         if not seq:
             return
 
         joined_seq = " ".join(seq)
         print(
-            f"[ML-SEQ] pid={pid} auid={auid} euid={euid} exe={exe} seq={joined_seq}",
+            "[ML-SEQ] "
+            f"pid={pid} auid={auid} euid={euid} exe={exe} "
+            f"auth_total={auth_total_count} auth_failed={auth_failed_count} "
+            f"seq={joined_seq}",
             flush=True,
         )
 
@@ -128,7 +162,15 @@ class SequenceBuffer:
 
 
 def normalize_event(payload: Dict[str, object]) -> Dict[str, str]:
-    return {field: str(payload.get(field, "")) for field in REQUIRED_FIELDS}
+    event = {field: str(payload.get(field, "")).strip() for field in REQUIRED_FIELDS}
+    event["type"] = event["type"].upper()
+    if not event["type"]:
+        if event["syscall"]:
+            event["type"] = "SYSCALL"
+        elif event["res"]:
+            event["type"] = "USER_AUTH"
+    event["res"] = event["res"].lower()
+    return event
 
 
 def remove_stale_socket(socket_path: str) -> None:

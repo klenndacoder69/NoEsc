@@ -32,8 +32,6 @@ void signal_handler(int) {
   running = 0; 
 }
 
-// Exclude known self-generated notification helper processes from offline
-// training export, because they are side effects of alerting, not attack steps.
 static bool is_dump_json_contaminant_exe(const std::string &exe) {
   if (exe.empty()) {
     return false;
@@ -46,7 +44,6 @@ static bool is_dump_json_contaminant_exe(const std::string &exe) {
     return true;
   }
 
-  // Handle both absolute and installed paths that end with the daemon binary.
   if (exe.find("noesc_daemon") != std::string::npos) {
     return true;
   }
@@ -56,7 +53,10 @@ static bool is_dump_json_contaminant_exe(const std::string &exe) {
 
 // Keep dump-json output aligned with ML feature-parity contract fields.
 static bool should_export_dump_json_event(const LogEvent &event) {
-  if (event.type != "SYSCALL") {
+  const bool is_syscall_event = event.type == "SYSCALL";
+  const bool is_user_auth_event = event.type == "USER_AUTH";
+
+  if (!is_syscall_event && !is_user_auth_event) {
     return false;
   }
 
@@ -64,11 +64,11 @@ static bool should_export_dump_json_event(const LogEvent &event) {
     return false;
   }
 
-  if (event.syscall.empty() && event.syscall_id < 0) {
+  if (is_syscall_event && event.syscall.empty() && event.syscall_id < 0) {
     return false;
   }
 
-  if (is_dump_json_contaminant_exe(event.exe)) {
+  if (is_syscall_event && is_dump_json_contaminant_exe(event.exe)) {
     return false;
   }
 

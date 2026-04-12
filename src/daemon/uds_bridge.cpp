@@ -173,7 +173,9 @@ std::string UdsBridge::build_payload_json(const LogEvent &event) const {
   // ostringstream is used for clear, explicit JSON assembly.
   std::ostringstream json;
   json << "{"
-       << "\"syscall\":\"" << escape_json(syscall_value) << "\","
+      << "\"type\":\"" << escape_json(event.type) << "\","
+      << "\"syscall\":\"" << escape_json(syscall_value) << "\","
+      << "\"res\":\"" << escape_json(event.res) << "\","
        << "\"auid\":\"" << escape_json(std::to_string(event.auid))
        << "\"," << "\"euid\":\"" << escape_json(std::to_string(event.euid))
        << "\"," << "\"exe\":\"" << escape_json(event.exe) << "\","

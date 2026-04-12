@@ -8,7 +8,7 @@ Use the same export pipeline and field contract for both classes:
 
 - C++ daemon is the single source of truth.
 - Both benign and malicious must be generated through `./noesc_daemon --dump-json`.
-- JSON schema used by ML: `timestamp`, `syscall`, `auid`, `euid`, `exe`, `pid`.
+- JSON schema used by ML: `type`, `timestamp`, `syscall`, `res`, `auid`, `euid`, `exe`, `pid`.
 
 This preserves feature parity between the Rules Engine and the ML engine.
 
@@ -37,9 +37,9 @@ In dump-json mode, these executables are excluded from export:
 
 Also excluded:
 
-- non-`SYSCALL` events
+- events outside `SYSCALL` and `USER_AUTH`
 - events with invalid `pid`, `auid`, or `euid` (`< 0`)
-- events with missing syscall (`syscall` empty and `syscall_id < 0`)
+- `SYSCALL` events with missing syscall (`syscall` empty and `syscall_id < 0`)
 
 ## 3) Malicious Log Generation
 
@@ -95,6 +95,15 @@ grep -c '"syscall":""' sample_set/training_data/benign/benign_parsed.json
 grep -c '"pid":"-1"' sample_set/training_data/benign/benign_parsed.json
 grep -c '"syscall":""' sample_set/training_data/malicious/malicious_parsed.json
 grep -c '"pid":"-1"' sample_set/training_data/malicious/malicious_parsed.json
+```
+
+### USER_AUTH coverage sanity checks
+
+```bash
+grep -c '"type":"USER_AUTH"' sample_set/training_data/benign/benign_parsed.json
+grep -c '"type":"USER_AUTH"' sample_set/training_data/malicious/malicious_parsed.json
+grep -c '"type":"USER_AUTH".*"res":"failed"' sample_set/training_data/benign/benign_parsed.json
+grep -c '"type":"USER_AUTH".*"res":"failed"' sample_set/training_data/malicious/malicious_parsed.json
 ```
 
 ### Should be zero due to contaminant filter

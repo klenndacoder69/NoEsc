@@ -9,7 +9,7 @@ Labels are assigned ONLY by input directory source:
 Pipeline summary:
 1. Ingest JSON-formatted audit events from two directories.
 2. Group events by (source_file, pid) to preserve process-local syscall order.
-3. Build syscall "documents" and contextual boolean features.
+3. Build syscall "documents" and contextual features, including USER_AUTH statistics.
 4. Sort samples chronologically and split 70/30 (train/test) without shuffling.
 5. Train SVM (sklearn.svm.SVC) using TF-IDF 2-gram and 3-gram syscall features
    + appended contextual features.
@@ -52,6 +52,9 @@ CONTEXT_FEATURE_COLUMNS = [
     "ctx_auid_euid_mismatch",
     "ctx_exe_in_tmp",
     "ctx_exe_in_usr_bin",
+    "ctx_auth_total_count",
+    "ctx_auth_failed_count",
+    "ctx_auth_failure_rate",
 ]
 
 
@@ -63,7 +66,9 @@ class ParsedEvent:
     ingest_order: int
     timestamp: float
     pid: str
+    event_type: str
     syscall: str
+    res: str
     auid: int
     euid: int
     exe: str
@@ -85,6 +90,9 @@ class SequenceSample:
     ctx_auid_euid_mismatch: int
     ctx_exe_in_tmp: int
     ctx_exe_in_usr_bin: int
+    ctx_auth_total_count: int
+    ctx_auth_failed_count: int
+    ctx_auth_failure_rate: float
     num_events: int
 
 
@@ -273,10 +281,24 @@ def normalize_event(
     ingest_order: int,
 ) -> Optional[ParsedEvent]:
     """Convert raw JSON event dict to ParsedEvent expected by training flow."""
+    event_type = str(record.get("type", "")).strip()
     syscall = str(record.get("syscall", "")).strip()
+    res = str(record.get("res", "")).strip().lower()
     pid_raw = record.get("pid")
 
-    if not syscall or pid_raw is None:
+    if not event_type:
+        if syscall:
+            event_type = "SYSCALL"
+        elif res:
+            event_type = "USER_AUTH"
+
+    if event_type not in {"SYSCALL", "USER_AUTH"}:
+        return None
+
+    if pid_raw is None:
+        return None
+
+    if event_type == "SYSCALL" and not syscall:
         return None
 
     pid = str(pid_raw).strip()
@@ -293,7 +315,9 @@ def normalize_event(
         ingest_order=ingest_order,
         timestamp=timestamp,
         pid=pid,
+        event_type=event_type,
         syscall=syscall,
+        res=res,
         auid=parse_int(record.get("auid"), default=-1),
         euid=parse_int(record.get("euid"), default=-1),
         exe=str(record.get("exe", "")).strip(),
@@ -344,9 +368,19 @@ def build_sequence_samples(
             continue
 
         group = group.sort_values(by=["timestamp", "ingest_order"], kind="mergesort")
-        syscalls = [token for token in group["syscall"].astype(str).tolist() if token]
+        syscall_tokens = group.loc[group["event_type"] == "SYSCALL", "syscall"].astype(str)
+        syscalls = [token for token in syscall_tokens.tolist() if token]
         if len(syscalls) < min_events_per_sequence:
             continue
+
+        auth_mask = group["event_type"] == "USER_AUTH"
+        auth_total_count = int(auth_mask.sum())
+        auth_failed_count = int((auth_mask & (group["res"] == "failed")).sum())
+        auth_failure_rate = (
+            float(auth_failed_count / auth_total_count)
+            if auth_total_count > 0
+            else 0.0
+        )
 
         exe_series = group["exe"].astype(str)
         document = " ".join(syscalls)
@@ -372,6 +406,9 @@ def build_sequence_samples(
                 or exe_series.str.startswith("/dev/shm/").any()
             ),
             ctx_exe_in_usr_bin=int(exe_series.str.startswith("/usr/bin/").any()),
+            ctx_auth_total_count=auth_total_count,
+            ctx_auth_failed_count=auth_failed_count,
+            ctx_auth_failure_rate=auth_failure_rate,
             num_events=int(len(group)),
         )
         samples.append(sample)
@@ -519,7 +556,7 @@ def main() -> None:
     if not all_events:
         raise ValueError(
             "No valid events loaded. Ensure input files are JSON/NDJSON with required fields: "
-            "syscall, auid, euid, exe, pid, timestamp."
+            "type, syscall (SYSCALL only), res (USER_AUTH optional), auid, euid, exe, pid, timestamp."
         )
 
     samples_df = build_sequence_samples(
@@ -589,6 +626,7 @@ def main() -> None:
         "train_ratio": args.train_ratio,
         "min_events_per_sequence": args.min_events_per_sequence,
         "context_feature_columns": CONTEXT_FEATURE_COLUMNS,
+        "event_types_included": ["SYSCALL", "USER_AUTH"],
         "num_sequence_samples": int(len(samples_df)),
         "num_train_samples": int(len(train_df)),
         "num_test_samples": int(len(test_df)),
