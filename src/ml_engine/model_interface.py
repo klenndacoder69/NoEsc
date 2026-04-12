@@ -13,14 +13,16 @@ import time
 from collections import deque
 from typing import Deque, Dict, List, Tuple
 
+from feature_contract import EVENT_TYPES_INCLUDED_SET, PAYLOAD_FIELDS
+
 SOCKET_PATH = "/tmp/noesc_ml.sock"
 RECV_BUFFER_SIZE = 65535
 WINDOW_SECONDS = 2.0
 NGRAM_SIZE = 3
 
-SUPPORTED_EVENT_TYPES = {"SYSCALL", "USER_AUTH"}
+SUPPORTED_EVENT_TYPES = EVENT_TYPES_INCLUDED_SET
 
-REQUIRED_FIELDS = ("type", "syscall", "res", "auid", "euid", "exe", "pid", "timestamp")
+REQUIRED_FIELDS = PAYLOAD_FIELDS
 
 
 class NoEscModel:

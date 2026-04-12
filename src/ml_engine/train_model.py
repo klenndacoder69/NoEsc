@@ -41,21 +41,17 @@ from sklearn.metrics import (
 )
 from sklearn.svm import SVC
 
+from feature_contract import (
+    CONTEXT_FEATURE_COLUMNS,
+    EVENT_TYPES_INCLUDED,
+    EVENT_TYPES_INCLUDED_SET,
+    FEATURE_CONTRACT_VERSION,
+    PAYLOAD_FIELDS,
+)
+
 RANDOM_STATE = 42
 MALICIOUS_LABEL = 1
 BENIGN_LABEL = 0
-
-# Context feature names are kept explicit so they can be reused in inference.
-CONTEXT_FEATURE_COLUMNS = [
-    "ctx_euid_is_root",
-    "ctx_auid_non_zero",
-    "ctx_auid_euid_mismatch",
-    "ctx_exe_in_tmp",
-    "ctx_exe_in_usr_bin",
-    "ctx_auth_total_count",
-    "ctx_auth_failed_count",
-    "ctx_auth_failure_rate",
-]
 
 
 @dataclass
@@ -281,7 +277,7 @@ def normalize_event(
     ingest_order: int,
 ) -> Optional[ParsedEvent]:
     """Convert raw JSON event dict to ParsedEvent expected by training flow."""
-    event_type = str(record.get("type", "")).strip()
+    event_type = str(record.get("type", "")).strip().upper()
     syscall = str(record.get("syscall", "")).strip()
     res = str(record.get("res", "")).strip().lower()
     pid_raw = record.get("pid")
@@ -292,7 +288,7 @@ def normalize_event(
         elif res:
             event_type = "USER_AUTH"
 
-    if event_type not in {"SYSCALL", "USER_AUTH"}:
+    if event_type not in EVENT_TYPES_INCLUDED_SET:
         return None
 
     if pid_raw is None:
@@ -488,8 +484,8 @@ def build_feature_matrices(
     x_train_text = vectorizer.fit_transform(train_df["document"])
     x_test_text = vectorizer.transform(test_df["document"])
 
-    x_train_ctx = csr_matrix(train_df[CONTEXT_FEATURE_COLUMNS].to_numpy(dtype=np.float32))
-    x_test_ctx = csr_matrix(test_df[CONTEXT_FEATURE_COLUMNS].to_numpy(dtype=np.float32))
+    x_train_ctx = csr_matrix(train_df[list(CONTEXT_FEATURE_COLUMNS)].to_numpy(dtype=np.float32))
+    x_test_ctx = csr_matrix(test_df[list(CONTEXT_FEATURE_COLUMNS)].to_numpy(dtype=np.float32))
 
     x_train = hstack([x_train_text, x_train_ctx], format="csr")
     x_test = hstack([x_test_text, x_test_ctx], format="csr")
@@ -625,8 +621,10 @@ def main() -> None:
         "benign_label": BENIGN_LABEL,
         "train_ratio": args.train_ratio,
         "min_events_per_sequence": args.min_events_per_sequence,
-        "context_feature_columns": CONTEXT_FEATURE_COLUMNS,
-        "event_types_included": ["SYSCALL", "USER_AUTH"],
+        "feature_contract_version": FEATURE_CONTRACT_VERSION,
+        "payload_fields": list(PAYLOAD_FIELDS),
+        "context_feature_columns": list(CONTEXT_FEATURE_COLUMNS),
+        "event_types_included": list(EVENT_TYPES_INCLUDED),
         "num_sequence_samples": int(len(samples_df)),
         "num_train_samples": int(len(train_df)),
         "num_test_samples": int(len(test_df)),

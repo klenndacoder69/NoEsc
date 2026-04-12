@@ -2,6 +2,9 @@
 
 This file summarizes the agreed process for building training data fairly for the thesis comparison.
 
+See also: `refs/PRE_HARVEST_RUNBOOK.md` for the frozen pre-harvest protocol,
+train-serve parity contract checks, and smoke-training commands.
+
 ## 1) Fairness Goal
 
 Use the same export pipeline and field contract for both classes:
