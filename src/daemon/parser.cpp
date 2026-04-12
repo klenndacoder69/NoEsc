@@ -20,14 +20,26 @@
 
 #include "parser.h"
 #include <algorithm>
+#include <cctype>
 #include <iostream>
 
 std::string AuditParser::extract_value(const std::string &line,
                                        const std::string &key) {
   std::string search = key + "=";
-  size_t pos = line.find(search);
-  if (pos == std::string::npos)
-    return "";
+  size_t pos = 0;
+  while (true) {
+    pos = line.find(search, pos);
+    if (pos == std::string::npos) {
+      return "";
+    }
+
+    // Ensure key starts at token boundary so "pid=" does not match "ppid=".
+    if (pos == 0 || std::isspace(static_cast<unsigned char>(line[pos - 1]))) {
+      break;
+    }
+
+    pos += search.length();
+  }
 
   pos += search.length();
 

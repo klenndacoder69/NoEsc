@@ -346,6 +346,51 @@ Keeping core vector logic in code improved implementation speed, predictability,
 **Future Work Alignment:**
 Migrate high-level thresholds/command lists/notification policy to a structured external rule schema to match the original design goal without sacrificing current safety checks.
 
+## 21. Weak-Label Dataset Purity and Noise-Robust Methodology
+
+**Original Implicit Assumption:**
+Samples collected under "benign" and "malicious" folders are perfectly clean ground truth labels.
+
+**Observed Practical Reality:**
+In an academic laboratory, labels are often **weak labels**:
+- Benign captures may include occasional suspicious behavior (student experimentation, misuse attempts).
+- Malicious captures may include normal background activity (shell, maintenance, helper processes).
+
+This introduces class contamination (label noise) at sequence level.
+
+**Methodology Position (for final manuscript):**
+The study treats directory-based labels as operationally useful but imperfect. Results are interpreted under weak supervision assumptions, with explicit contamination controls and sensitivity analysis.
+
+**Implemented/Recommended Controls:**
+1. **Symmetric export path for both classes**
+  - Both benign and malicious datasets are generated via the same daemon export mode (`--dump-json`) and identical parser/filters.
+  - Prevents feature-space mismatch caused by class-specific preprocessing.
+
+2. **Sequence-level training abstraction**
+  - Model is trained on grouped `(source_file, pid)` syscall sequences, not isolated events.
+  - Reduces impact of isolated noisy lines by requiring coherent process-local behavior.
+
+3. **Minimum sequence length gate**
+  - Keep `min-events-per-sequence` constraint to discard trivial one-off process traces.
+
+4. **Dual-evaluation protocol (required in reporting)**
+  - **Full-set model:** train/evaluate using all collected samples.
+  - **High-confidence subset model:** train/evaluate on a curated subset after conservative screening.
+  - Compare both to quantify sensitivity to label noise.
+
+5. **Manual contamination audit (lightweight but explicit)**
+  - Randomly inspect a fixed sample of sequence records per class (e.g., 100 benign + 100 malicious).
+  - Record estimated contamination rate:
+    - benign contamination = suspicious sequences found in benign / benign samples audited
+    - malicious contamination = clearly benign sequences found in malicious / malicious samples audited
+
+6. **Transparency in threats to validity**
+  - Explicitly state weak-label risk as an internal-validity limitation.
+  - Report whether conclusions are stable across full-set and curated-set experiments.
+
+**Why This Is Acceptable for Thesis Methodology:**
+Security telemetry datasets are commonly weakly labeled in practice. A defensible methodology does not require perfect labels; it requires transparent assumptions, contamination-aware controls, and robustness checks. This revision aligns the paper with real-world SOC dataset constraints while preserving scientific rigor.
+
 ## Summary of Revisions Impact
 
 ### Methodology Enhancements:
@@ -355,6 +400,7 @@ Migrate high-level thresholds/command lists/notification policy to a structured 
 - Exec-only SudoMisuse scoring gate (Revision 15)
 - Burst episode mega-summary aggregation (Revision 16)
 - Rule externalization scope adjustment (Revision 20)
+- Weak-label dataset purity and noise-robust evaluation (Revision 21)
 
 ### Operational Features:
 - Multi-tier alerting (Revision 8)
@@ -376,6 +422,7 @@ These enhancements address **real-world deployment challenges** in academic HIDS
 2. Balance between security and usability
 3. Context-aware threat classification
 4. Integration with existing enterprise monitoring infrastructure
+5. Noise-aware evaluation under weak-label security telemetry
 
 **Recommendation:** Add a subsection titled "Alert Fatigue Mitigation Strategies" in the paper discussing how context-aware severity and progressive alerting reduce false positive impact while maintaining detection coverage.
 

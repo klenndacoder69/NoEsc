@@ -32,6 +32,49 @@ void signal_handler(int) {
   running = 0; 
 }
 
+// Exclude known self-generated notification helper processes from offline
+// training export, because they are side effects of alerting, not attack steps.
+static bool is_dump_json_contaminant_exe(const std::string &exe) {
+  if (exe.empty()) {
+    return false;
+  }
+
+  if (exe == "/usr/bin/notify-send" || exe == "/usr/bin/xargs" ||
+      exe == "/usr/bin/gdbus" || exe == "/usr/bin/plasmashell" ||
+      exe == "/usr/bin/git" || exe == "/usr/bin/mktemp" ||
+      exe == "/usr/bin/seq") {
+    return true;
+  }
+
+  // Handle both absolute and installed paths that end with the daemon binary.
+  if (exe.find("noesc_daemon") != std::string::npos) {
+    return true;
+  }
+
+  return false;
+}
+
+// Keep dump-json output aligned with ML feature-parity contract fields.
+static bool should_export_dump_json_event(const LogEvent &event) {
+  if (event.type != "SYSCALL") {
+    return false;
+  }
+
+  if (event.pid < 0 || event.auid < 0 || event.euid < 0) {
+    return false;
+  }
+
+  if (event.syscall.empty() && event.syscall_id < 0) {
+    return false;
+  }
+
+  if (is_dump_json_contaminant_exe(event.exe)) {
+    return false;
+  }
+
+  return true;
+}
+
 int main(int argc, char **argv) {
   bool dump_json_mode = false;
 
@@ -68,19 +111,22 @@ int main(int argc, char **argv) {
     try {
       if (AuditParser::parse_line(line, event)) {
         if (dump_json_mode) {
+          if (!should_export_dump_json_event(event)) {
+            continue;
+          }
           ml_bridge.dump_event_json_stdout(event);
         } else {
           ml_bridge.send_event(event);
+          engine.evaluate(event);
         }
-        engine.evaluate(event);
       }
     } catch (const std::exception &e) {
       std::cerr << "[!] Error processing line: " << e.what() << std::endl;
     }
   }
 
-  engine.flush_pending_sudo_burst_summaries();
   if (!dump_json_mode) {
+    engine.flush_pending_sudo_burst_summaries();
     ml_bridge.shutdown();
   }
 

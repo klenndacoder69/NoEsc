@@ -1,0 +1,27 @@
+{
+  "created_utc": "2026-04-11T15:26:25.866043+00:00",
+  "random_state": 42,
+  "malicious_label": 1,
+  "benign_label": 0,
+  "train_ratio": 0.7,
+  "min_events_per_sequence": 3,
+  "context_feature_columns": [
+    "ctx_euid_is_root",
+    "ctx_auid_non_zero",
+    "ctx_auid_euid_mismatch",
+    "ctx_exe_in_tmp",
+    "ctx_exe_in_usr_bin"
+  ],
+  "num_sequence_samples": 76978,
+  "num_train_samples": 53884,
+  "num_test_samples": 23094,
+  "vocabulary_size": 724,
+  "inputs": {
+    "malicious_dir": "/home/swuffles/Documents/NoEsc/sample_set/ml_inputs/malicious",
+    "benign_dir": "/home/swuffles/Documents/NoEsc/sample_set/ml_inputs/benign"
+  },
+  "artifacts": {
+    "svm_model": "/home/swuffles/Documents/NoEsc/models/svm_model.pkl",
+    "tfidf_vectorizer": "/home/swuffles/Documents/NoEsc/models/tfidf_vectorizer.pkl"
+  }
+}

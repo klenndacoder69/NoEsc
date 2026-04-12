@@ -1,0 +1,102 @@
+NoEsc on  ml-bridge-experimentation:main [$!?⇡] via △ v4.3.1 via 🐍 v3.14.3 (.venv) 
+❯ python3 src/ml_engine/train_model.py --malicious-dir sample_set/ml_inputs/malicious/ --benign-dir sample_set/ml_inputs/benign/ --model-out models/svm_model.pkl --vectorizer-out models/tfidf_vectorizer.pkl --metadata-out models/training_metadata.json --train-ratio 0.70 --min-events-per-sequence 2
+========================================================================
+NoEsc Offline Training Report
+========================================================================
+Total sequence samples : 252495
+Train samples (70%)    : 176746
+Test samples (30%)     : 75749
+Train class counts     : {0: np.int64(33424), 1: np.int64(143322)}
+Test class counts      : {0: np.int64(14325), 1: np.int64(61424)}
+------------------------------------------------------------------------
+Accuracy               : 0.968026
+Precision              : 0.970615
+Recall                 : 0.990557
+F1-Score               : 0.980485
+False Positive Rate    : 0.128586
+Matthews Corrcoef      : 0.893516
+------------------------------------------------------------------------
+Confusion Matrix (labels: 0=benign, 1=malicious): TN=12483 FP=1842 FN=580 TP=60844
+========================================================================
+Saved SVM model      : models/svm_model.pkl
+Saved TF-IDF vect.   : models/tfidf_vectorizer.pkl
+Saved training meta  : models/training_metadata.json
+
+
+Semantic workspace search is not currently available
+
+I’ll quickly read your saved metadata file to anchor the analysis with dataset composition and feature-space size, then I’ll give you a practical verdict plus next-step plan.
+
+Read [](file:///home/swuffles/Documents/NoEsc/models/training_metadata.json)
+
+This is a strong result for attack detection, with one important caveat for deployment.
+
+My read:
+1. Good news
+1. Recall 0.9906 means you are catching about 99.1% of malicious test samples.
+2. F1 0.9805 and MCC 0.8935 are both strong.
+3. Dataset size is large enough to be meaningful: 252,495 sequence samples in training_metadata.json.
+
+2. Main risk
+1. False Positive Rate is 0.1286, so about 12.86% of truly benign samples were flagged malicious.
+2. From your confusion matrix, that is 1,842 false alarms out of 14,325 benign test samples.
+3. This is the biggest issue if your goal includes low alert fatigue.
+
+What this means in plain terms:
+1. Excellent at not missing attacks (low FN: 580 out of 61,424 malicious).
+2. Not yet excellent at avoiding benign false alarms (FP: 1,842).
+3. Accuracy 0.9680 looks high, but your test set is malicious-heavy, so accuracy alone can hide benign-side pain.
+
+Extra interpretation from your matrix:
+1. Specificity (true benign recognition) is 12,483 / (12,483 + 1,842) = 0.8714.
+2. Balanced accuracy is roughly (recall + specificity) / 2 = (0.9906 + 0.8714) / 2 = 0.9310.
+3. This confirms the model is very strong overall, but weaker on benign discrimination than malicious detection.
+
+How I would analyze and report it:
+1. Lead with recall, FPR, and MCC (not accuracy alone).
+2. Report class imbalance explicitly:
+1. Benign total = 33,424 + 14,325 = 47,749
+2. Malicious total = 143,322 + 61,424 = 204,746
+3. Add an FP impact statement:
+1. “About 12.9% of benign sequences are flagged.”
+4. Keep your current run as baseline model.
+
+If you want to reduce false positives next:
+1. Re-run with stricter sequence quality:
+1. min-events-per-sequence = 3, then 5.
+2. Compare FP and recall deltas.
+2. Perform false-positive audit:
+1. Inspect top benign source files/PIDs that produce FP.
+2. Look for recurring maintenance/admin patterns.
+3. Do ablation runs:
+1. Text only
+2. Context only
+3. Combined
+4. Evaluate threshold-tuning path (decision scores) on validation data to trade small recall loss for large FPR reduction.
+
+Bottom line: very good research baseline, especially for detection power. The next milestone is reducing benign false alarms without collapsing recall.
+
+v3:
+python3 src/ml_engine/train_model.py --malicious-dir sample_set/ml_inputs/malicious/ --benign-dir sample_set/ml_inputs/benign/ --model-out models/svm_model.pkl --vectorizer-out models/tfidf_vectorizer.pkl --metadata-out models/training_metadata.json --train-ratio 0.70 --min-events-per-sequence 3
+========================================================================
+NoEsc Offline Training Report
+========================================================================
+Total sequence samples : 76978
+Train samples (70%)    : 53884
+Test samples (30%)     : 23094
+Train class counts     : {0: np.int64(28932), 1: np.int64(24952)}
+Test class counts      : {0: np.int64(12400), 1: np.int64(10694)}
+------------------------------------------------------------------------
+Accuracy               : 0.951849
+Precision              : 0.905811
+Recall                 : 1.000000
+F1-Score               : 0.950578
+False Positive Rate    : 0.089677
+Matthews Corrcoef      : 0.908064
+------------------------------------------------------------------------
+Confusion Matrix (labels: 0=benign, 1=malicious): TN=11288 FP=1112 FN=0 TP=10694
+========================================================================
+Saved SVM model      : models/svm_model.pkl
+Saved TF-IDF vect.   : models/tfidf_vectorizer.pkl
+Saved training meta  : models/training_metadata.json
+

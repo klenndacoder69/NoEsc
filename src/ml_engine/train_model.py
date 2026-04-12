@@ -375,7 +375,7 @@ def build_sequence_samples(
             num_events=int(len(group)),
         )
         samples.append(sample)
-
+ 
     if not samples:
         raise ValueError(
             "No sequence samples were produced. Try lowering --min-events-per-sequence."
@@ -407,6 +407,32 @@ def chronological_split(samples_df: pd.DataFrame, train_ratio: float) -> Tuple[p
 
     return train_df, test_df
 
+def chronological_split_per_class(
+    samples_df: pd.DataFrame, train_ratio: float
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    train_parts: List[pd.DataFrame] = []
+    test_parts: List[pd.DataFrame] = []
+
+    for label in sorted(samples_df["label"].unique()):
+        class_df = samples_df[samples_df["label"] == label].copy()
+        class_train, class_test = chronological_split(class_df, train_ratio)
+        train_parts.append(class_train)
+        test_parts.append(class_test)
+
+    train_df = pd.concat(train_parts, ignore_index=True).sort_values(
+        by=["timestamp", "ingest_order"], kind="mergesort"
+    ).reset_index(drop=True)
+
+    test_df = pd.concat(test_parts, ignore_index=True).sort_values(
+        by=["timestamp", "ingest_order"], kind="mergesort"
+    ).reset_index(drop=True)
+
+    if train_df["label"].nunique() < 2 or test_df["label"].nunique() < 2:
+        raise ValueError(
+            "Per-class chronological split still produced a single-class split."
+        )
+
+    return train_df, test_df
 
 def build_feature_matrices(
     train_df: pd.DataFrame,
@@ -419,7 +445,7 @@ def build_feature_matrices(
         analyzer="word",
         ngram_range=(2, 3),
         lowercase=False,
-        token_pattern=r"(?u)\\b[^\\s]+\\b",
+        token_pattern=r"(?u)\b[^\s]+\b",
     )
 
     x_train_text = vectorizer.fit_transform(train_df["document"])
@@ -501,7 +527,7 @@ def main() -> None:
         min_events_per_sequence=args.min_events_per_sequence,
     )
 
-    train_df, test_df = chronological_split(samples_df, train_ratio=args.train_ratio)
+    train_df, test_df = chronological_split_per_class(samples_df, train_ratio=args.train_ratio)
 
     y_train = train_df["label"].to_numpy(dtype=np.int32)
     y_test = test_df["label"].to_numpy(dtype=np.int32)

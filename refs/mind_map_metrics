@@ -1,0 +1,118 @@
+1. accuracy - how accurate (clue's in the name) we are. not the best measurement, but a good good general overview.
+why not the best? because a model may be 95% correct of the time towards benign samples, but all wrong towards malicious 
+
+2. precision - how many were truly malicious out of all malicious samples we caught
+precision mostly talks about whether we correctly identified truly malicious samples as malicious
+
+3. recall - how many were caught based on all true attacks (this is crucial as FN here is missed attacks)
+recall is useful since knowing FN here means these are the missed attacks the model is doing
+
+4. f1 score - it checks whether both precision and recall is high (if either one is low, then f1 drops)
+
+5. false positive rate - it checks what are classified as malicious when it actuality it is not
+
+6. false negative rate - classified as benign but it is malicious
+
+7. matthews correlation coefficient - stays informative. is not affected by class imbalances. solves the issue with accuracy being falsely good
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Absolutely. In your trainer, all metrics come from the confusion matrix, computed in train_model.py and printed in train_model.py.
+
+For your labels:
+- Class 0 = benign
+- Class 1 = malicious
+
+First, confusion matrix terms:
+- TN: benign predicted benign
+- FP: benign predicted malicious (false alarm)
+- FN: malicious predicted benign (missed attack)
+- TP: malicious predicted malicious
+
+1. Accuracy  
+$$
+\text{Accuracy}=\frac{TP+TN}{TP+TN+FP+FN}
+$$
+Relevance:
+- Overall correctness.
+- Good quick summary.
+- Weakness: can look great even when one class is poorly handled (especially with imbalance).
+
+2. Precision  
+$$
+\text{Precision}=\frac{TP}{TP+FP}
+$$
+Relevance:
+- Of all alerts marked malicious, how many are truly malicious.
+- High precision means fewer false alarms and better analyst trust.
+
+3. Recall (Detection Rate)  
+$$
+\text{Recall}=\frac{TP}{TP+FN}
+$$
+Relevance:
+- Of all true attacks, how many you actually catch.
+- In security, this is critical because FN means missed attacks.
+
+4. F1 Score  
+$$
+F1=2\cdot\frac{\text{Precision}\cdot\text{Recall}}{\text{Precision}+\text{Recall}}
+$$
+Relevance:
+- Balances precision and recall into one number.
+- Useful when you want good detection while keeping false alarms reasonable.
+
+5. False Positive Rate (FPR)  
+$$
+\text{FPR}=\frac{FP}{FP+TN}
+$$
+Relevance:
+- Among truly benign activity, how often you raise a malicious alert.
+- Directly tied to alert fatigue in real deployment.
+
+6. MCC (Matthews Correlation Coefficient)  
+$$
+\text{MCC}=
+\frac{TP\cdot TN-FP\cdot FN}
+{\sqrt{(TP+FP)(TP+FN)(TN+FP)(TN+FN)}}
+$$
+Relevance:
+- A balanced single score in [-1, 1].
+- 1 means perfect, 0 means random-like, -1 means total disagreement.
+- Very useful when classes are imbalanced, often more trustworthy than accuracy alone.
+
+How to interpret them together for NoEsc:
+1. Prioritize Recall and FPR first.
+2. Then check Precision.
+3. Use F1 as balance.
+4. Use MCC as overall quality sanity check.
+
+If you want, I can take your latest actual TN/FP/FN/TP numbers and compute all metrics manually with you so each value becomes intuitive.

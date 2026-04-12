@@ -1,0 +1,162 @@
+I will quickly fetch exact line anchors for each pipeline stage so the expanded example maps directly to your code with precise references.
+
+Searched for regex `def load_json_records|def normalize_event|def build_sequence_samples|def chronological_split_per_class|def build_feature_matrices` (`**/src/ml_engine/train_model.py`), 5 results
+
+Searched for regex `grouped = df.groupby|document = " ".join\(syscalls\)|ctx_euid_is_root|x_train = hstack|svm.fit\(` (`**/src/ml_engine/train_model.py`), 7 results
+
+I have the exact anchors now; next is a full end-to-end worked example with concrete rows, grouped sequences, context flags, and the final numeric vector the SVM sees.Perfect, here is a fully expanded concrete walkthrough.
+
+Assume this is one tiny training input with two files:
+- benign file from benign dir gives label 0
+- malicious file from malicious dir gives label 1
+
+Step 1. JSON records loaded from files
+Code path: train_model.py
+
+Benign file records:
+```json
+{"timestamp":"1712345678.10:101","pid":"1001","syscall":"59","auid":"1000","euid":"1000","exe":"/usr/bin/ls"}
+{"timestamp":"1712345678.20:102","pid":"1001","syscall":"257","auid":"1000","euid":"1000","exe":"/usr/bin/ls"}
+{"timestamp":"1712345678.30:103","pid":"1001","syscall":"3","auid":"1000","euid":"1000","exe":"/usr/bin/ls"}
+{"timestamp":"1712345680.10:104","pid":"1002","syscall":"0","auid":"1000","euid":"1000","exe":"/usr/bin/cat"}
+{"timestamp":"1712345680.20:105","pid":"1002","syscall":"1","auid":"1000","euid":"1000","exe":"/usr/bin/cat"}
+```
+
+Malicious file records:
+```json
+{"timestamp":"1712345690.10:201","pid":"2001","syscall":"59","auid":"1000","euid":"0","exe":"/tmp/.x"}
+{"timestamp":"1712345690.20:202","pid":"2001","syscall":"257","auid":"1000","euid":"0","exe":"/tmp/.x"}
+{"timestamp":"1712345690.30:203","pid":"2001","syscall":"59","auid":"1000","euid":"0","exe":"/tmp/.x"}
+{"timestamp":"1712345691.10:204","pid":"2002","syscall":"59","auid":"1001","euid":"0","exe":"/dev/shm/dropper"}
+{"timestamp":"1712345691.20:205","pid":"2002","syscall":"59","auid":"1001","euid":"0","exe":"/dev/shm/dropper"}
+```
+
+Step 2. Each record becomes ParsedEvent
+Code path: train_model.py
+
+What gets added:
+- source_file path
+- label from directory: benign 0, malicious 1
+- ingest_order (global increasing index)
+- parsed timestamp float (serial suffix removed)
+
+Now you have event rows like:
+- source_file=benign_a.json, pid=1001, syscall=59, auid=1000, euid=1000, exe=/usr/bin/ls, label=0
+- source_file=mal_a.json, pid=2001, syscall=59, auid=1000, euid=0, exe=/tmp/.x, label=1
+- etc.
+
+Step 3. Build event DataFrame and group into sequences
+Code path: train_model.py and grouping at train_model.py
+
+Grouping key is:
+- source_file
+- pid
+- label
+
+So this produces 4 groups:
+- G1: (benign_a.json, 1001, 0) with 3 events
+- G2: (benign_a.json, 1002, 0) with 2 events
+- G3: (mal_a.json, 2001, 1) with 3 events
+- G4: (mal_a.json, 2002, 1) with 2 events
+
+This is what sequence means: one group like G1 or G3, not one raw line.
+
+Step 4. Convert each group into one SequenceSample
+Document creation: train_model.py  
+Context flags: train_model.py
+
+For each group:
+
+1. G1 benign pid 1001
+- syscalls: [59, 257, 3]
+- document: "59 257 3"
+- ctx_euid_is_root: 0
+- ctx_auid_non_zero: 1
+- ctx_auid_euid_mismatch: 0
+- ctx_exe_in_tmp: 0
+- ctx_exe_in_usr_bin: 1
+- num_events: 3
+
+2. G2 benign pid 1002
+- document: "0 1"
+- context: [0, 1, 0, 0, 1]
+- num_events: 2
+
+3. G3 malicious pid 2001
+- document: "59 257 59"
+- euid includes 0, exe in /tmp
+- context: [1, 1, 1, 1, 0]
+- num_events: 3
+
+4. G4 malicious pid 2002
+- document: "59 59"
+- euid includes 0, exe in /dev/shm
+- context: [1, 1, 1, 1, 0]
+- num_events: 2
+
+At this point, each sequence is one row in samples_df.
+
+Step 5. Chronological split per class
+Code path: train_model.py
+
+With train_ratio 0.70 on tiny data:
+- class 0 has 2 sequences -> train 1, test 1
+- class 1 has 2 sequences -> train 1, test 1
+
+So train has one benign + one malicious sequence, and test has one benign + one malicious sequence.
+
+Step 6. Text features from sequence documents
+Code path: train_model.py
+
+Vectorizer uses ngram_range=(2,3), so examples:
+- from "59 257 3" -> 2-grams: "59 257", "257 3"; 3-gram: "59 257 3"
+- from "59 257 59" -> 2-grams: "59 257", "257 59"; 3-gram: "59 257 59"
+
+TF-IDF turns these into numeric values like:
+- feature "59 257" = 0.52
+- feature "257 59" = 0.71
+- feature "59 257 59" = 0.71
+- others maybe 0
+
+Step 7. Append context features to the right of TF-IDF features
+Code path: train_model.py
+
+So one final row vector looks conceptually like:
+- text part: [0, 0.52, 0.71, 0, 0.71, ...]
+- context part: [1, 1, 1, 1, 0]
+- final: [text..., 1, 1, 1, 1, 0]
+
+This full numeric vector is what the model receives.
+
+Step 8. SVM learns from those vectors
+Training call: train_model.py
+
+It learns one weight per feature:
+- one weight per n-gram feature
+- one weight per context feature
+
+Decision is linear score:
+$$
+\text{score} = w \cdot x + b
+$$
+
+Illustrative only:
+- w(ctx_euid_is_root)=+0.8
+- w(ctx_exe_in_tmp)=+1.2
+- w(ngram "59 257 59")=+1.5
+- w(ngram "0 1")=-0.9
+
+For a sample with those active malicious-like features:
+- score might be positive -> predict malicious (1)
+For benign-like features:
+- score might be negative -> predict benign (0)
+
+What the machine is actually interpreting:
+- numeric pattern of syscall n-grams
+- numeric context flags
+- jointly, via learned weights
+
+That is the full concrete path:
+raw log lines -> JSON records -> ParsedEvent rows -> grouped sequence rows -> numeric vectors -> weighted SVM decision.
+
+If you want, next I can do the same walkthrough with one real PID from your dataset format and show exactly what its final sequence row would be.
