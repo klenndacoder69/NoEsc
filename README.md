@@ -50,6 +50,57 @@ g++ -std=c++17 src/daemon/main.cpp src/daemon/parser.cpp src/daemon/rules_engine
    sudo service auditd reload
    ```
 
+## Engine Runtime Modes
+
+NoEsc daemon now supports selecting detection paths at runtime:
+
+- Hybrid (default): Rule engine + ML bridge
+- ML-only: ML bridge only (no rule-engine evaluation)
+- Rules-only: Rule engine only (no ML bridge)
+
+### CLI flags
+
+```bash
+./noesc_daemon --ml-only
+./noesc_daemon --rules-only
+./noesc_daemon --dump-json
+```
+
+### Environment override
+
+Set `NOESC_ENGINE_MODE` to one of:
+
+- `hybrid`
+- `ml-only`
+- `rules-only`
+
+Example:
+
+```bash
+NOESC_ENGINE_MODE=ml-only ./noesc_daemon
+```
+
+## ML-only Deployment (No Rule Engine)
+
+Use this flow to evaluate ML behavior in isolation:
+
+1. Start ML listener:
+
+```bash
+source .venv/bin/activate
+python src/ml_engine/model_interface.py
+```
+
+2. Run daemon in ML-only mode:
+
+```bash
+./noesc_daemon --ml-only
+```
+
+If running through auditd plugin path, point plugin `path` to a wrapper that
+executes daemon with `--ml-only`, or set `NOESC_ENGINE_MODE=ml-only` in the
+auditd service environment.
+
 ## Maintenance Mode (SudoMisuse Notifications)
 
 NoEsc supports an operator maintenance window for SudoMisuse desktop notifications.

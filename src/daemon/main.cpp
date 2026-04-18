@@ -21,7 +21,10 @@
 #include "parser.h"
 #include "rules_engine.h"
 #include "uds_bridge.h"
+#include <algorithm>
+#include <cctype>
 #include <csignal>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <unistd.h>
@@ -30,6 +33,38 @@ volatile sig_atomic_t running = 1;
 
 void signal_handler(int) { 
   running = 0; 
+}
+
+enum class EngineMode { Hybrid, MlOnly, RulesOnly };
+
+static std::string to_lower_copy(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return value;
+}
+
+static bool parse_engine_mode(const std::string &raw_mode, EngineMode &mode_out) {
+  const std::string mode = to_lower_copy(raw_mode);
+  if (mode == "hybrid") {
+    mode_out = EngineMode::Hybrid;
+    return true;
+  }
+  if (mode == "ml-only" || mode == "ml_only") {
+    mode_out = EngineMode::MlOnly;
+    return true;
+  }
+  if (mode == "rules-only" || mode == "rules_only") {
+    mode_out = EngineMode::RulesOnly;
+    return true;
+  }
+  return false;
+}
+
+static void print_usage(const char *program_name) {
+  std::cerr << "Usage: " << program_name
+            << " [--dump-json] [--ml-only | --rules-only]" << std::endl;
+  std::cerr << "  Env override: NOESC_ENGINE_MODE={hybrid|ml-only|rules-only}"
+            << std::endl;
 }
 
 static bool is_dump_json_contaminant_exe(const std::string &exe) {
@@ -87,20 +122,57 @@ static bool should_export_dump_json_event(const LogEvent &event) {
 
 int main(int argc, char **argv) {
   bool dump_json_mode = false;
+  EngineMode engine_mode = EngineMode::Hybrid;
+  bool mode_set_by_cli = false;
+
+  const char *env_mode_raw = std::getenv("NOESC_ENGINE_MODE");
+  if (env_mode_raw != nullptr && env_mode_raw[0] != '\0') {
+    if (!parse_engine_mode(env_mode_raw, engine_mode)) {
+      std::cerr << "[!] Invalid NOESC_ENGINE_MODE: " << env_mode_raw << std::endl;
+      print_usage(argv[0]);
+      return 1;
+    }
+  }
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--dump-json") {
       dump_json_mode = true;
+    } else if (arg == "--ml-only") {
+      if (mode_set_by_cli && engine_mode != EngineMode::MlOnly) {
+        std::cerr << "[!] Conflicting engine mode flags" << std::endl;
+        print_usage(argv[0]);
+        return 1;
+      }
+      engine_mode = EngineMode::MlOnly;
+      mode_set_by_cli = true;
+    } else if (arg == "--rules-only") {
+      if (mode_set_by_cli && engine_mode != EngineMode::RulesOnly) {
+        std::cerr << "[!] Conflicting engine mode flags" << std::endl;
+        print_usage(argv[0]);
+        return 1;
+      }
+      engine_mode = EngineMode::RulesOnly;
+      mode_set_by_cli = true;
     } else if (arg == "-h" || arg == "--help") {
-      std::cerr << "Usage: " << argv[0] << " [--dump-json]" << std::endl;
+      print_usage(argv[0]);
       return 0;
     } else {
       std::cerr << "[!] Unknown argument: " << arg << std::endl;
-      std::cerr << "Usage: " << argv[0] << " [--dump-json]" << std::endl;
+      print_usage(argv[0]);
       return 1;
     }
   }
+
+  if (dump_json_mode && engine_mode != EngineMode::Hybrid) {
+    std::cerr << "[!] --dump-json cannot be combined with engine mode flags"
+              << std::endl;
+    print_usage(argv[0]);
+    return 1;
+  }
+
+  const bool enable_ml_bridge = !dump_json_mode && engine_mode != EngineMode::RulesOnly;
+  const bool enable_rules = !dump_json_mode && engine_mode != EngineMode::MlOnly;
 
   signal(SIGTERM, signal_handler);
   signal(SIGINT, signal_handler);
@@ -110,7 +182,7 @@ int main(int argc, char **argv) {
   LogEvent event;
   std::string line;
 
-  if (!dump_json_mode) {
+  if (enable_ml_bridge) {
     ml_bridge.initialize();
   }
 
@@ -126,8 +198,12 @@ int main(int argc, char **argv) {
           }
           ml_bridge.dump_event_json_stdout(event);
         } else {
-          ml_bridge.send_event(event);
-          engine.evaluate(event);
+          if (enable_ml_bridge) {
+            ml_bridge.send_event(event);
+          }
+          if (enable_rules) {
+            engine.evaluate(event);
+          }
         }
       }
     } catch (const std::exception &e) {
@@ -136,8 +212,12 @@ int main(int argc, char **argv) {
   }
 
   if (!dump_json_mode) {
-    engine.flush_pending_sudo_burst_summaries();
-    ml_bridge.shutdown();
+    if (enable_rules) {
+      engine.flush_pending_sudo_burst_summaries();
+    }
+    if (enable_ml_bridge) {
+      ml_bridge.shutdown();
+    }
   }
 
   return 0;
