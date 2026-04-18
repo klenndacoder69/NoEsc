@@ -1,0 +1,45 @@
+{
+  "created_utc": "2026-04-18T19:33:00.140866+00:00",
+  "random_state": 42,
+  "malicious_label": 1,
+  "benign_label": 0,
+  "train_ratio": 0.7,
+  "min_events_per_sequence": 3,
+  "feature_contract_version": "v2_syscall_user_auth_context",
+  "payload_fields": [
+    "type",
+    "syscall",
+    "res",
+    "auid",
+    "euid",
+    "exe",
+    "pid",
+    "timestamp"
+  ],
+  "context_feature_columns": [
+    "ctx_euid_is_root",
+    "ctx_auid_non_zero",
+    "ctx_auid_euid_mismatch",
+    "ctx_exe_in_tmp",
+    "ctx_exe_in_usr_bin",
+    "ctx_auth_total_count",
+    "ctx_auth_failed_count",
+    "ctx_auth_failure_rate"
+  ],
+  "event_types_included": [
+    "SYSCALL",
+    "USER_AUTH"
+  ],
+  "num_sequence_samples": 123082,
+  "num_train_samples": 86157,
+  "num_test_samples": 36925,
+  "vocabulary_size": 719,
+  "inputs": {
+    "malicious_dir": "/home/swuffles/Documents/NoEsc/sample_set/training_data/malicious",
+    "benign_dir": "/home/swuffles/Documents/NoEsc/sample_set/training_data/benign"
+  },
+  "artifacts": {
+    "svm_model": "/home/swuffles/Documents/NoEsc/models/v4/svm_model.pkl",
+    "tfidf_vectorizer": "/home/swuffles/Documents/NoEsc/models/v4/tfidf_vectorizer.pkl"
+  }
+}

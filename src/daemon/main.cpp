@@ -60,7 +60,17 @@ static bool should_export_dump_json_event(const LogEvent &event) {
     return false;
   }
 
-  if (event.pid < 0 || event.auid < 0 || event.euid < 0) {
+  if (event.pid < 0) {
+    return false;
+  }
+
+  // SYSCALL events require stable user identifiers for feature generation.
+  if (is_syscall_event && (event.auid < 0 || event.euid < 0)) {
+    return false;
+  }
+
+  // USER_AUTH may legitimately carry unset auid (e.g., login manager paths).
+  if (is_user_auth_event && event.euid < 0) {
     return false;
   }
 

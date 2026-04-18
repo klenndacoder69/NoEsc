@@ -84,6 +84,10 @@ bool AuditParser::parse_line(const std::string &line, LogEvent &event) {
   event.auid = extract_int(line, "auid");
   event.euid = extract_int(line, "euid");
   event.uid = extract_int(line, "uid");
+  if (event.euid < 0 && event.uid >= 0) {
+    // USER_AUTH records often provide uid but omit euid.
+    event.euid = event.uid;
+  }
   event.suid = extract_int(line, "suid");
   event.fsuid = extract_int(line, "fsuid");
   event.pid = extract_int(line, "pid");
@@ -97,6 +101,18 @@ bool AuditParser::parse_line(const std::string &line, LogEvent &event) {
   event.a1 = extract_value(line, "a1");
   event.a2 = extract_value(line, "a2");
   event.res = extract_value(line, "res");
+  if (!event.res.empty()) {
+    // USER_AUTH lines can encode res inside quoted msg payloads where
+    // trailing quote/control chunks follow (e.g., failed'\x1dUID=...).
+    size_t quote_pos = event.res.find('\'');
+    if (quote_pos != std::string::npos) {
+      event.res = event.res.substr(0, quote_pos);
+    }
+    size_t ctrl_pos = event.res.find('\x1d');
+    if (ctrl_pos != std::string::npos) {
+      event.res = event.res.substr(0, ctrl_pos);
+    }
+  }
   event.success = extract_value(line, "success");
 
   // Timestamp extraction (format: msg=audit(12345.678:123):)

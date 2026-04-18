@@ -100,3 +100,30 @@ Saved SVM model      : models/svm_model.pkl
 Saved TF-IDF vect.   : models/tfidf_vectorizer.pkl
 Saved training meta  : models/training_metadata.json
 
+
+shittt
+NoEsc on  fair-engines [$!?] via △ v4.3.1 via 🐍 v3.14.4 (.venv) 
+❯ python3 src/ml_engine/train_model.py --malicious-dir sample_set/training_data/malicious --benign-dir sample_set/training_data/benign --model-out models/v4/svm_model.pkl --vectorizer-out models/v4/tfidf_vectorizer.pkl --metadata-out models/v4/training_metadata.json --train-ratio 0.70 --min-events-per-sequence 2
+========================================================================
+NoEsc Offline Training Report
+========================================================================
+Total sequence samples : 367028
+Train samples (70%)    : 256919
+Test samples (30%)     : 110109
+Train class counts     : {0: np.int64(33424), 1: np.int64(223495)}
+Test class counts      : {0: np.int64(14325), 1: np.int64(95784)}
+------------------------------------------------------------------------
+Accuracy               : 0.794967
+Precision              : 0.999277
+Recall                 : 0.764856
+F1-Score               : 0.866492
+False Positive Rate    : 0.003700
+Matthews Corrcoef      : 0.542850
+------------------------------------------------------------------------
+Confusion Matrix (labels: 0=benign, 1=malicious): TN=14272 FP=53 FN=22523 TP=73261
+========================================================================
+Saved SVM model      : models/v4/svm_model.pkl
+Saved TF-IDF vect.   : models/v4/tfidf_vectorizer.pkl
+Saved training meta  : models/v4/training_metadata.json
+
+
