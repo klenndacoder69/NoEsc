@@ -101,6 +101,15 @@ This keeps the configured minimum-events threshold for reporting, but still scor
 short sequences (`seq_len < min_events_per_sequence`) and marks them with
 `short_seq=inferred` in `ML-DETECT` output.
 
+To surface USER_AUTH-only PID windows (no syscall sequence) in logs, add:
+
+```bash
+python src/ml_engine/model_interface.py --short-seq-policy infer --emit-benign --emit-auth-only
+```
+
+This emits `ML-AUTH-ONLY` lines with `auth_total`, `auth_failed`, and
+`auth_fail_rate` when a PID window has authentication events but no syscall tokens.
+
 2. Run daemon in ML-only mode:
 
 ```bash
@@ -110,6 +119,47 @@ short sequences (`seq_len < min_events_per_sequence`) and marks them with
 If running through auditd plugin path, point plugin `path` to a wrapper that
 executes daemon with `--ml-only`, or set `NOESC_ENGINE_MODE=ml-only` in the
 auditd service environment.
+
+## Short-Window Companion Model Workflow
+
+Use this when most live windows are `seq_len` 1-2 and you want a dedicated
+short-window ML companion model.
+
+1. Build short-window dataset and train short model:
+
+```bash
+chmod +x scripts/ml/train_short_window_model.sh
+./scripts/ml/train_short_window_model.sh
+```
+
+2. Outputs:
+
+- Dataset: `sample_set/short_windows/`
+- Stats: `sample_set/short_windows/short_window_dataset_stats.json`
+- Model artifacts: `models/short_v1/`
+
+3. Run listener with dual-model routing (long model for full sequences,
+short model for seq_len 1-2):
+
+```bash
+python src/ml_engine/model_interface.py \
+   --short-seq-policy infer \
+   --emit-benign \
+   --emit-auth-only \
+   --short-model-enabled \
+   --short-model-max-seq-len 2 \
+   --short-malicious-score-threshold 0.5
+```
+
+Use `--short-malicious-score-threshold` to calibrate short-window alerts. Short-model
+predictions with `pred=1` but `score<threshold` are demoted to benign at runtime.
+This keeps long-window behavior unchanged while reducing noisy short-window alerts.
+
+4. Summarize listener fairness/coverage after replay:
+
+```bash
+python scripts/ml/summarize_ml_listener_log.py --log final_ml_listener.log
+```
 
 ## Maintenance Mode (SudoMisuse Notifications)
 

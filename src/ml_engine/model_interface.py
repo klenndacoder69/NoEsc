@@ -27,6 +27,8 @@ DEFAULT_WINDOW_SECONDS = 2.0
 DEFAULT_NGRAM_SIZE = 3
 DEFAULT_POLL_SLEEP_SECONDS = 0.05
 DEFAULT_SHORT_SEQ_POLICY = "skip"
+DEFAULT_SHORT_MODEL_MAX_SEQ_LEN = 2
+DEFAULT_SHORT_MALICIOUS_SCORE_THRESHOLD: Optional[float] = None
 
 DEFAULT_MODEL_CANDIDATES = (
     "models/v4_min3/svm_model.pkl",
@@ -42,6 +44,15 @@ DEFAULT_METADATA_CANDIDATES = (
     "models/v4_min3/training_metadata.json",
     "models/v4/training_metadata.json",
     "models/training_metadata.json",
+)
+DEFAULT_SHORT_MODEL_CANDIDATES = (
+    "models/short_v1/svm_model.pkl",
+)
+DEFAULT_SHORT_VECTORIZER_CANDIDATES = (
+    "models/short_v1/tfidf_vectorizer.pkl",
+)
+DEFAULT_SHORT_METADATA_CANDIDATES = (
+    "models/short_v1/training_metadata.json",
 )
 
 SUPPORTED_EVENT_TYPES = EVENT_TYPES_INCLUDED_SET
@@ -66,6 +77,18 @@ def parse_int(value: str, default: int = -1) -> int:
             return int(float(text))
         except ValueError:
             return default
+
+
+def parse_optional_float(value: Optional[str], default: Optional[float] = None) -> Optional[float]:
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"", "unset", "none", "null", "n/a", "na", "off", "disabled"}:
+        return default
+    try:
+        return float(text)
+    except ValueError:
+        return default
 
 
 def parse_args() -> argparse.Namespace:
@@ -101,12 +124,64 @@ def parse_args() -> argparse.Namespace:
         help="Emit ML-DETECT lines for benign predictions too (default: malicious only).",
     )
     parser.add_argument(
+        "--emit-auth-only",
+        action="store_true",
+        help=(
+            "Emit ML-AUTH-ONLY lines for PID windows that contain USER_AUTH events "
+            "but no SYSCALL sequence."
+        ),
+    )
+    parser.add_argument(
         "--short-seq-policy",
         choices=("skip", "infer"),
         default=os.environ.get("NOESC_SHORT_SEQ_POLICY", DEFAULT_SHORT_SEQ_POLICY),
         help=(
             "Behavior when seq_len is below min-events-per-sequence: "
             "'skip' (default) or 'infer' (score anyway and annotate output)."
+        ),
+    )
+    parser.add_argument(
+        "--short-model-enabled",
+        action="store_true",
+        help="Enable dedicated short-window model routing for seq_len <= --short-model-max-seq-len.",
+    )
+    parser.add_argument(
+        "--short-model-path",
+        default=os.environ.get(
+            "NOESC_SHORT_MODEL_PATH", pick_first_existing(DEFAULT_SHORT_MODEL_CANDIDATES)
+        ),
+    )
+    parser.add_argument(
+        "--short-vectorizer-path",
+        default=os.environ.get(
+            "NOESC_SHORT_VECTORIZER_PATH",
+            pick_first_existing(DEFAULT_SHORT_VECTORIZER_CANDIDATES),
+        ),
+    )
+    parser.add_argument(
+        "--short-metadata-path",
+        default=os.environ.get(
+            "NOESC_SHORT_METADATA_PATH", pick_first_existing(DEFAULT_SHORT_METADATA_CANDIDATES)
+        ),
+    )
+    parser.add_argument(
+        "--short-model-max-seq-len",
+        type=int,
+        default=int(
+            os.environ.get("NOESC_SHORT_MODEL_MAX_SEQ_LEN", str(DEFAULT_SHORT_MODEL_MAX_SEQ_LEN))
+        ),
+        help="Maximum seq_len routed to short model when --short-model-enabled is set.",
+    )
+    parser.add_argument(
+        "--short-malicious-score-threshold",
+        type=float,
+        default=parse_optional_float(
+            os.environ.get("NOESC_SHORT_MALICIOUS_SCORE_THRESHOLD"),
+            DEFAULT_SHORT_MALICIOUS_SCORE_THRESHOLD,
+        ),
+        help=(
+            "Optional decision_function score threshold for short-model malicious outputs. "
+            "When set, short-model predictions with pred=1 and score<threshold are demoted to benign."
         ),
     )
     return parser.parse_args()
@@ -197,14 +272,22 @@ class SequenceBuffer:
         window_seconds: float,
         ngram_size: int,
         model: NoEscModel,
+        short_model: Optional[NoEscModel],
+        short_model_max_seq_len: int,
         emit_benign: bool,
+        emit_auth_only: bool,
         short_seq_policy: str,
+        short_malicious_score_threshold: Optional[float],
     ):
         self.window_seconds = window_seconds
         self.ngram_size = ngram_size
         self.model = model
+        self.short_model = short_model
+        self.short_model_max_seq_len = max(1, short_model_max_seq_len)
         self.emit_benign = emit_benign
+        self.emit_auth_only = emit_auth_only
         self.short_seq_policy = short_seq_policy
+        self.short_malicious_score_threshold = short_malicious_score_threshold
         self.by_pid: Dict[str, Dict[str, object]] = {}
 
     def add_event(self, event: Dict[str, str]) -> None:
@@ -276,14 +359,6 @@ class SequenceBuffer:
         if not events:
             return
 
-        syscall_seq = [
-            str(event.get("syscall", ""))
-            for event in events
-            if event.get("type") == "SYSCALL" and str(event.get("syscall", ""))
-        ]
-        if not syscall_seq:
-            return
-
         auids = [int(event.get("auid", -1)) for event in events]
         euids = [int(event.get("euid", -1)) for event in events]
         exes = [str(event.get("exe", "")) for event in events]
@@ -297,6 +372,27 @@ class SequenceBuffer:
         auth_failure_rate = (
             float(auth_failed_count / auth_total_count) if auth_total_count > 0 else 0.0
         )
+
+        latest_auid = str(next((auid for auid in reversed(auids) if auid != -1), ""))
+        latest_euid = str(next((euid for euid in reversed(euids) if euid != -1), ""))
+        latest_exe = next((exe for exe in reversed(exes) if exe), "")
+
+        syscall_seq = [
+            str(event.get("syscall", ""))
+            for event in events
+            if event.get("type") == "SYSCALL" and str(event.get("syscall", ""))
+        ]
+        if not syscall_seq:
+            if self.emit_auth_only and auth_total_count > 0:
+                auth_status = "failed" if auth_failed_count > 0 else "success"
+                print(
+                    "[ML-AUTH-ONLY] "
+                    f"pid={pid} auid={latest_auid} euid={latest_euid} exe={latest_exe} "
+                    f"auth_total={auth_total_count} auth_failed={auth_failed_count} "
+                    f"auth_fail_rate={auth_failure_rate:.4f} auth_status={auth_status}",
+                    flush=True,
+                )
+            return
 
         ctx_values: Dict[str, float] = {
             "ctx_euid_is_root": float(any(euid == 0 for euid in euids)),
@@ -314,10 +410,6 @@ class SequenceBuffer:
             "ctx_auth_failed_count": float(auth_failed_count),
             "ctx_auth_failure_rate": float(auth_failure_rate),
         }
-
-        latest_auid = str(next((auid for auid in reversed(auids) if auid != -1), ""))
-        latest_euid = str(next((euid for euid in reversed(euids) if euid != -1), ""))
-        latest_exe = next((exe for exe in reversed(exes) if exe), "")
 
         joined_seq = " ".join(syscall_seq)
         print(
@@ -348,18 +440,44 @@ class SequenceBuffer:
             )
             return
 
-        prediction, score = self.model.predict_sample(joined_seq, ctx_values)
+        selected_model = self.model
+        model_source = "long"
+        if self.short_model is not None and len(syscall_seq) <= self.short_model_max_seq_len:
+            selected_model = self.short_model
+            model_source = "short"
+
+        prediction, score = selected_model.predict_sample(joined_seq, ctx_values)
+
+        short_gate = "none"
+        if (
+            model_source == "short"
+            and prediction == 1
+            and self.short_malicious_score_threshold is not None
+            and score is not None
+            and score < self.short_malicious_score_threshold
+        ):
+            prediction = 0
+            short_gate = "demoted"
+
         label = "MALICIOUS" if prediction == 1 else "BENIGN"
 
         if prediction == 0 and not self.emit_benign:
             return
 
         score_text = "n/a" if score is None else f"{score:.6f}"
+        threshold_text = (
+            "off"
+            if self.short_malicious_score_threshold is None
+            else f"{self.short_malicious_score_threshold:.6f}"
+        )
         print(
             "[ML-DETECT] "
             f"pid={pid} pred={prediction} label={label} score={score_text} "
             f"seq_len={len(syscall_seq)} auth_total={auth_total_count} "
             f"auth_failed={auth_failed_count} auth_fail_rate={auth_failure_rate:.4f}"
+            f" model_source={model_source}"
+            f" short_gate={short_gate}"
+            f" short_mal_threshold={threshold_text}"
             f" short_seq={'inferred' if is_short_seq else 'no'}"
             f" required={self.model.min_events_per_sequence}",
             flush=True,
@@ -388,8 +506,12 @@ def run_listener(
     window_seconds: float,
     ngram_size: int,
     model: NoEscModel,
+    short_model: Optional[NoEscModel],
+    short_model_max_seq_len: int,
     emit_benign: bool,
+    emit_auth_only: bool,
     short_seq_policy: str,
+    short_malicious_score_threshold: Optional[float],
 ) -> None:
     remove_stale_socket(socket_path)
 
@@ -411,8 +533,12 @@ def run_listener(
         window_seconds=window_seconds,
         ngram_size=ngram_size,
         model=model,
+        short_model=short_model,
+        short_model_max_seq_len=short_model_max_seq_len,
         emit_benign=emit_benign,
+        emit_auth_only=emit_auth_only,
         short_seq_policy=short_seq_policy,
+        short_malicious_score_threshold=short_malicious_score_threshold,
     )
 
     try:
@@ -463,13 +589,38 @@ def main() -> None:
     )
     model.load_model()
 
+    short_model: Optional[NoEscModel] = None
+    if args.short_model_enabled:
+        short_model = NoEscModel(
+            model_path=args.short_model_path,
+            vectorizer_path=args.short_vectorizer_path,
+            metadata_path=args.short_metadata_path,
+            min_events_per_sequence=1,
+        )
+        short_model.load_model()
+        print(
+            f"[*] Short model routing enabled for seq_len <= {max(1, args.short_model_max_seq_len)}",
+            flush=True,
+        )
+
+    if args.short_malicious_score_threshold is not None:
+        print(
+            "[*] Short model malicious score threshold enabled at "
+            f"{args.short_malicious_score_threshold:.6f}",
+            flush=True,
+        )
+
     run_listener(
         socket_path=args.socket_path,
         window_seconds=args.window_seconds,
         ngram_size=args.ngram_size,
         model=model,
+        short_model=short_model,
+        short_model_max_seq_len=max(1, args.short_model_max_seq_len),
         emit_benign=args.emit_benign,
+        emit_auth_only=args.emit_auth_only,
         short_seq_policy=args.short_seq_policy,
+        short_malicious_score_threshold=args.short_malicious_score_threshold,
     )
 
 

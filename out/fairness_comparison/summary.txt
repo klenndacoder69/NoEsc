@@ -1,0 +1,19 @@
+================================================================
+NoEsc Fairness Comparison Summary
+================================================================
+runs_per_mode: 3
+----------------------------------------------------------------
+ML-only (calibrated dual-model)
+  mean alerts total             : 92.00
+  mean alert rate / input events: 0.1014%
+  mean len1 malicious rate      : 2.1512%
+  mean len2 malicious rate      : 0.3190%
+  mean len3+ malicious rate     : 4.1999%
+  mean bridge drop count        : 0.00
+----------------------------------------------------------------
+Rules-only
+  mean alerts total             : 0.00
+  mean alert rate / input events: 0.0000%
+  mean WARNING alerts           : 0.00
+  mean CRITICAL alerts          : 0.00
+----------------------------------------------------------------
