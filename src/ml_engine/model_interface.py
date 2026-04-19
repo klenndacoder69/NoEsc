@@ -26,6 +26,7 @@ RECV_BUFFER_SIZE = 65535
 DEFAULT_WINDOW_SECONDS = 2.0
 DEFAULT_NGRAM_SIZE = 3
 DEFAULT_POLL_SLEEP_SECONDS = 0.05
+DEFAULT_SHORT_SEQ_POLICY = "skip"
 
 DEFAULT_MODEL_CANDIDATES = (
     "models/v4_min3/svm_model.pkl",
@@ -98,6 +99,15 @@ def parse_args() -> argparse.Namespace:
         "--emit-benign",
         action="store_true",
         help="Emit ML-DETECT lines for benign predictions too (default: malicious only).",
+    )
+    parser.add_argument(
+        "--short-seq-policy",
+        choices=("skip", "infer"),
+        default=os.environ.get("NOESC_SHORT_SEQ_POLICY", DEFAULT_SHORT_SEQ_POLICY),
+        help=(
+            "Behavior when seq_len is below min-events-per-sequence: "
+            "'skip' (default) or 'infer' (score anyway and annotate output)."
+        ),
     )
     return parser.parse_args()
 
@@ -188,11 +198,13 @@ class SequenceBuffer:
         ngram_size: int,
         model: NoEscModel,
         emit_benign: bool,
+        short_seq_policy: str,
     ):
         self.window_seconds = window_seconds
         self.ngram_size = ngram_size
         self.model = model
         self.emit_benign = emit_benign
+        self.short_seq_policy = short_seq_policy
         self.by_pid: Dict[str, Dict[str, object]] = {}
 
     def add_event(self, event: Dict[str, str]) -> None:
@@ -326,7 +338,8 @@ class SequenceBuffer:
                 flush=True,
             )
 
-        if len(syscall_seq) < self.model.min_events_per_sequence:
+        is_short_seq = len(syscall_seq) < self.model.min_events_per_sequence
+        if is_short_seq and self.short_seq_policy == "skip":
             print(
                 "[ML-DETECT] "
                 f"pid={pid} skipped=min_events_gate seq_len={len(syscall_seq)} "
@@ -346,7 +359,9 @@ class SequenceBuffer:
             "[ML-DETECT] "
             f"pid={pid} pred={prediction} label={label} score={score_text} "
             f"seq_len={len(syscall_seq)} auth_total={auth_total_count} "
-            f"auth_failed={auth_failed_count} auth_fail_rate={auth_failure_rate:.4f}",
+            f"auth_failed={auth_failed_count} auth_fail_rate={auth_failure_rate:.4f}"
+            f" short_seq={'inferred' if is_short_seq else 'no'}"
+            f" required={self.model.min_events_per_sequence}",
             flush=True,
         )
 
@@ -374,6 +389,7 @@ def run_listener(
     ngram_size: int,
     model: NoEscModel,
     emit_benign: bool,
+    short_seq_policy: str,
 ) -> None:
     remove_stale_socket(socket_path)
 
@@ -396,6 +412,7 @@ def run_listener(
         ngram_size=ngram_size,
         model=model,
         emit_benign=emit_benign,
+        short_seq_policy=short_seq_policy,
     )
 
     try:
@@ -452,6 +469,7 @@ def main() -> None:
         ngram_size=args.ngram_size,
         model=model,
         emit_benign=args.emit_benign,
+        short_seq_policy=args.short_seq_policy,
     )
 
 

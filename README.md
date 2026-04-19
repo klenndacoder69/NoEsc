@@ -91,6 +91,16 @@ source .venv/bin/activate
 python src/ml_engine/model_interface.py
 ```
 
+To reduce `skipped=min_events_gate` lines without retraining, run:
+
+```bash
+python src/ml_engine/model_interface.py --short-seq-policy infer --emit-benign
+```
+
+This keeps the configured minimum-events threshold for reporting, but still scores
+short sequences (`seq_len < min_events_per_sequence`) and marks them with
+`short_seq=inferred` in `ML-DETECT` output.
+
 2. Run daemon in ML-only mode:
 
 ```bash

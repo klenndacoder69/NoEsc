@@ -35,4 +35,4 @@
   - negative_control_benign_vs_benign: PASS (mcc=0.000000; accuracy=0.500000; expected collapse)
   - contaminant_executables_in_malicious: PASS (all zero for notify-send,xargs,gdbus,plasmashell,git,mktemp,seq)
   - exact_cross_class_duplicate_lines: PASS (0 overlaps)
-  - external_holdout_session_check: PENDING
+  - external_holdout_session_check: PASS (ML-only replay window=5s on audit.log.1 produced malicious=4, benign=30, skipped=799; malicious pids=8936,8982,8993,3461)
