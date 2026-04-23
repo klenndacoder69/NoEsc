@@ -80,6 +80,53 @@ Example:
 NOESC_ENGINE_MODE=ml-only ./noesc_daemon
 ```
 
+## Deployed Live Engine Switching (auditd plugin mode)
+
+After running `sudo ./scripts/install_daemon.sh`, NoEsc installs:
+
+- Wrapper: `/usr/local/bin/noesc-daemon-wrapper`
+- Mode switch command: `/usr/local/bin/noesc-engine`
+- Mode file: `/etc/noesc/engine_mode`
+
+Use these commands to switch daemon behavior live for presentations:
+
+```bash
+sudo noesc-engine status
+sudo noesc-engine rules-only
+sudo noesc-engine ml-only
+sudo noesc-engine hybrid
+```
+
+Each mode change rewrites `/etc/noesc/engine_mode` and reloads `auditd` so the
+plugin respawns with the selected engine path.
+
+## ML Listener Service Deployment (systemd)
+
+`install_daemon.sh` also installs:
+
+- Unit: `/etc/systemd/system/noesc-ml-listener.service`
+- Launcher: `/usr/local/bin/noesc-ml-listener-launcher`
+- Env file: `/etc/noesc/ml_listener.env`
+
+Enable and start ML listener service:
+
+```bash
+sudo systemctl enable --now noesc-ml-listener
+```
+
+Check service health/logs:
+
+```bash
+sudo systemctl status noesc-ml-listener
+sudo journalctl -u noesc-ml-listener -n 80 --no-pager
+```
+
+Stop ML listener service:
+
+```bash
+sudo systemctl disable --now noesc-ml-listener
+```
+
 ## ML-only Deployment (No Rule Engine)
 
 Use this flow to evaluate ML behavior in isolation:

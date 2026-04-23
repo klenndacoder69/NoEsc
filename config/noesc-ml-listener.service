@@ -1,0 +1,15 @@
+[Unit]
+Description=NoEsc Machine Learning Listener
+After=network.target auditd.service
+Wants=auditd.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/noesc/ml_listener.env
+ExecStart=/usr/local/bin/noesc-ml-listener-launcher
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

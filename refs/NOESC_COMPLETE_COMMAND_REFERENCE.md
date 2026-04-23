@@ -486,6 +486,9 @@ Current script inventory:
 ./scripts/install_daemon.sh
 ./scripts/ml/pre_harvest_smoke_train.sh
 ./scripts/ml/train_short_window_model.sh
+./scripts/noesc-daemon-wrapper.sh
+./scripts/noesc-engine.sh
+./scripts/noesc-ml-listener-launcher.sh
 ./scripts/noesc-maint.sh
 ./scripts/notification/replay_extreme_10s_realtime.sh
 ./scripts/notification/test_debug_notify.sh
@@ -522,6 +525,79 @@ scripts/ml/build_short_window_dataset.py
 scripts/ml/replay_sample_set_to_ml_socket.py
 scripts/ml/summarize_ml_listener_log.py
 scripts/ml/verify_feature_contract.py
+```
+
+## 15B) Deployed Live-Mode Commands (for presentation)
+
+Install/update deployed daemon + mode switch command + ML listener service files:
+
+```bash
+cd /home/swuffles/Documents/NoEsc
+sudo ./scripts/install_daemon.sh
+```
+
+Check active deployed engine mode:
+
+```bash
+sudo noesc-engine status
+```
+
+Switch deployed daemon to rules-only:
+
+```bash
+sudo noesc-engine rules-only
+```
+
+Switch deployed daemon to ML-only (bridge path only):
+
+```bash
+sudo noesc-engine ml-only
+```
+
+Switch deployed daemon back to hybrid:
+
+```bash
+sudo noesc-engine hybrid
+```
+
+Enable and start ML listener as a background service:
+
+```bash
+sudo systemctl enable --now noesc-ml-listener
+```
+
+Check ML listener service state/logs:
+
+```bash
+sudo systemctl status noesc-ml-listener
+sudo journalctl -u noesc-ml-listener -n 80 --no-pager
+```
+
+Edit deployed ML listener configuration:
+
+```bash
+sudo nano /etc/noesc/ml_listener.env
+sudo systemctl restart noesc-ml-listener
+```
+
+Stop ML listener service:
+
+```bash
+sudo systemctl disable --now noesc-ml-listener
+```
+
+Presentation flow (quick switch demo):
+
+```bash
+# 1) Rules only demo
+sudo noesc-engine rules-only
+
+# 2) ML listener on + ML only demo
+sudo systemctl enable --now noesc-ml-listener
+sudo noesc-engine ml-only
+
+# 3) Combined demo
+sudo noesc-engine hybrid
 ```
 
 ## 16) Differentiated Strict-Order Blocks (Complete Setup to Full Run)
