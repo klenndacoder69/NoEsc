@@ -31,6 +31,10 @@ echo "[*] Step 2b: Installing maintenance helper command..."
 cp scripts/noesc-maint.sh /usr/local/bin/noesc-maint
 chmod +x /usr/local/bin/noesc-maint
 
+echo "[*] Step 2b.1: Installing health check helper command..."
+cp scripts/noesc-health.sh /usr/local/bin/noesc-health
+chmod +x /usr/local/bin/noesc-health
+
 echo "[*] Step 2c: Installing engine wrapper and switch command..."
 cp scripts/noesc-daemon-wrapper.sh /usr/local/bin/noesc-daemon-wrapper
 chmod +x /usr/local/bin/noesc-daemon-wrapper
@@ -122,5 +126,6 @@ echo "    - To edit whitelist:  nano /etc/noesc/suid_whitelist.conf"
 echo "    - ML env file:        nano /etc/noesc/ml_listener.env"
 echo "    - Project .env file:  nano $PROJECT_ROOT/.env"
 echo "    - Maintenance mode:   noesc-maint status|on 30m|off"
+echo "    - Health check:       noesc-health"
 echo "    - To view alerts:     cat /var/log/noesc_alerts.log"
 echo "----------------------------------------------------"
