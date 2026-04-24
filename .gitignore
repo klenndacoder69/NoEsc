@@ -19,10 +19,13 @@ data/
 *.csv
 
 # references
-refs/
+noesc_references/
 # trained models
 # models/*.pkl
 
 # Ignore OS files
 .DS_Store
 
+.idea/
+
+model_results/README.md

@@ -1,0 +1,21 @@
+========================================================================
+NoEsc Offline Training Report
+========================================================================
+Total sequence samples : 123082
+Train samples (70%)    : 86157
+Test samples (30%)     : 36925
+Train class counts     : {0: np.int64(28932), 1: np.int64(57225)}
+Test class counts      : {0: np.int64(12400), 1: np.int64(24525)}
+------------------------------------------------------------------------
+Accuracy               : 0.997698
+Precision              : 0.997963
+Recall                 : 0.998573
+F1-Score               : 0.998268
+False Positive Rate    : 0.004032
+Matthews Corrcoef      : 0.994839
+------------------------------------------------------------------------
+Confusion Matrix (labels: 0=benign, 1=malicious): TN=12350 FP=50 FN=35 TP=24490
+========================================================================
+Saved SVM model      : models/v4_repro/svm_model.pkl
+Saved TF-IDF vect.   : models/v4_repro/tfidf_vectorizer.pkl
+Saved training meta  : models/v4_repro/training_metadata.json

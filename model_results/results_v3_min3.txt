@@ -1,0 +1,24 @@
+========================================================================
+NoEsc Offline Training Report — Model: v3 (min_events=3)
+========================================================================
+Dataset Source          : sample_set/ml_inputs/ (old dataset)
+Feature Contract        : v1 (SYSCALL-only context, no USER_AUTH)
+========================================================================
+Total sequence samples : 76978
+Train samples (70%)    : 53884
+Test samples (30%)     : 23094
+Train class counts     : {0: 28932, 1: 24952}
+Test class counts      : {0: 12400, 1: 10694}
+------------------------------------------------------------------------
+Accuracy               : 0.951849
+Precision              : 0.905811
+Recall                 : 1.000000
+F1-Score               : 0.950578
+False Positive Rate    : 0.089677
+Matthews Corrcoef      : 0.908064
+------------------------------------------------------------------------
+Confusion Matrix (labels: 0=benign, 1=malicious): TN=11288 FP=1112 FN=0 TP=10694
+========================================================================
+Saved SVM model      : models/svm_model.pkl (later moved to models/v3/)
+Saved TF-IDF vect.   : models/tfidf_vectorizer.pkl
+Saved training meta  : models/training_metadata.json

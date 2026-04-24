@@ -1,0 +1,5 @@
+# for ml-listener
+sudo journalctl -u noesc-ml-listener -f -o cat --no-pager
+
+# for rule-engine
+sudo tail -f /var/log/noesc_alerts.log
