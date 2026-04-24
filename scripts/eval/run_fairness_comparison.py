@@ -229,7 +229,13 @@ def run_ml_repeat(
 
     socket_path = "/tmp/noesc_ml.sock"
     if os.path.exists(socket_path):
-        os.unlink(socket_path)
+        try:
+            os.unlink(socket_path)
+        except PermissionError:
+            raise RuntimeError(
+                f"Cannot remove stale socket {socket_path} (owned by root). "
+                f"Run: sudo rm -f {socket_path}"
+            )
 
     listener_cmd = [
         sys.executable,

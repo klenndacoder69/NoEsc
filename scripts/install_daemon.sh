@@ -21,11 +21,12 @@ if [ ! -f "noesc_daemon" ]; then
 fi
 
 echo "[*] Step 2: Installing binary to /usr/local/bin..."
-# Kill any currently running old versions of the daemon
-pkill noesc_daemon || true
-
-cp noesc_daemon /usr/local/bin/
-chmod +x /usr/local/bin/noesc_daemon
+# Use atomic rename to avoid "Text file busy" errors.
+# cp to a temp path first, then mv (rename syscall) atomically replaces
+# the directory entry even if the old binary is still being executed.
+cp noesc_daemon /usr/local/bin/noesc_daemon.new
+chmod +x /usr/local/bin/noesc_daemon.new
+mv -f /usr/local/bin/noesc_daemon.new /usr/local/bin/noesc_daemon
 
 echo "[*] Step 2b: Installing maintenance helper command..."
 cp scripts/noesc-maint.sh /usr/local/bin/noesc-maint
@@ -110,14 +111,40 @@ else
     echo "[!] systemctl not found; skipped ML listener service install"
 fi
 
-echo "[*] Step 6: Restarting Auditd Service..."
-# systemd often refuses to restart auditd directly due to security constraints.
-# Sending a SIGHUP signal forces auditd to re-read its configuration and respawn plugins safely.
-pkill -HUP auditd || kill -s SIGHUP $(pidof auditd)
+echo "[*] Step 5c: Protecting ML socket from systemd-tmpfiles-clean..."
+# systemd-tmpfiles-clean.timer periodically purges stale files from /tmp.
+# Without this exclusion, the ML listener's Unix domain socket gets deleted
+# after ~15 min of inactivity, silently breaking the UDS bridge.
+echo 'x /tmp/noesc_ml.sock' > /etc/tmpfiles.d/noesc.conf
+chmod 644 /etc/tmpfiles.d/noesc.conf
+
+echo "[*] Step 6: Restarting services..."
+# Kill old daemon so auditd respawns it with the new binary.
+pkill -f "noesc_daemon" >/dev/null 2>&1 || true
+sleep 1
+
+# Remove stale ML socket so the listener can bind a fresh one.
+rm -f /tmp/noesc_ml.sock
+
+# Restart ML listener first (so socket is ready when daemon starts).
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl restart noesc-ml-listener 2>/dev/null || true
+    sleep 2
+fi
+
+# Reload auditd — this respawns the daemon plugin with the new binary.
+if pgrep -x auditd >/dev/null 2>&1; then
+    pkill -HUP auditd || kill -s SIGHUP "$(pidof auditd)"
+    echo "[+] auditd reloaded — daemon plugin respawning"
+else
+    echo "[!] auditd is not running"
+fi
+
+# Give auditd a moment to respawn the plugin.
+sleep 2
 
 echo "----------------------------------------------------"
 echo "[+] INSTALLATION COMPLETE!"
-echo "    - The daemon is now running silently in the background."
 echo "    - Switch engine mode:  sudo noesc-engine hybrid|ml-only|rules-only"
 echo "    - Check engine mode:   sudo noesc-engine status"
 echo "    - Start ML service:    sudo systemctl enable --now noesc-ml-listener"
@@ -129,3 +156,4 @@ echo "    - Maintenance mode:   noesc-maint status|on 30m|off"
 echo "    - Health check:       noesc-health"
 echo "    - To view alerts:     cat /var/log/noesc_alerts.log"
 echo "----------------------------------------------------"
+
