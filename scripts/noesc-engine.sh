@@ -3,6 +3,7 @@ set -euo pipefail
 
 MODE_FILE="/etc/noesc/engine_mode"
 PLUGIN_CONF="/etc/audit/plugins.d/noesc.conf"
+DAEMON_BIN="/usr/local/bin/noesc_daemon"
 
 usage() {
   cat <<'EOF'
@@ -59,6 +60,10 @@ current_mode() {
 
 reload_auditd() {
   require_root
+  # Ensure mode changes apply immediately by removing stale daemon instances.
+  # auditd will respawn the plugin process with the latest wrapper-selected flags.
+  pkill -f "^${DAEMON_BIN}($| )" >/dev/null 2>&1 || true
+
   if pgrep -x auditd >/dev/null 2>&1; then
     pkill -HUP auditd || kill -s SIGHUP "$(pidof auditd)"
     echo "[+] auditd reloaded"
