@@ -8,6 +8,10 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 echo "[*] Step 1: Compiling NoEsc Daemon..."
 make clean > /dev/null
 make
@@ -51,9 +55,31 @@ chmod 644 /etc/noesc/engine_mode
 
 # Seed ML listener environment file once (operator can edit after install).
 if [ ! -f /etc/noesc/ml_listener.env ]; then
-    cp config/ml_listener.env.example /etc/noesc/ml_listener.env
+    DEFAULT_PYTHON_BIN="python3"
+    if [ -x "$PROJECT_ROOT/.venv/bin/python" ]; then
+        DEFAULT_PYTHON_BIN="$PROJECT_ROOT/.venv/bin/python"
+    fi
+
+    sed \
+      -e "s|__NOESC_PROJECT_ROOT__|$PROJECT_ROOT|g" \
+      -e "s|__NOESC_PYTHON_BIN__|$DEFAULT_PYTHON_BIN|g" \
+      config/ml_listener.env.example > /etc/noesc/ml_listener.env
 fi
 chmod 644 /etc/noesc/ml_listener.env
+
+# Seed project-level .env once so launcher can run without relying on /etc edits.
+if [ ! -f "$PROJECT_ROOT/.env" ]; then
+    DEFAULT_PYTHON_BIN="python3"
+    if [ -x "$PROJECT_ROOT/.venv/bin/python" ]; then
+        DEFAULT_PYTHON_BIN="$PROJECT_ROOT/.venv/bin/python"
+    fi
+
+    sed \
+      -e "s|__NOESC_PROJECT_ROOT__|$PROJECT_ROOT|g" \
+      -e "s|__NOESC_PYTHON_BIN__|$DEFAULT_PYTHON_BIN|g" \
+      config/ml_listener.env.example > "$PROJECT_ROOT/.env"
+fi
+chmod 644 "$PROJECT_ROOT/.env"
 
 echo "[*] Step 4: Initializing Dedicated Alert Log..."
 touch /var/log/noesc_alerts.log
@@ -94,6 +120,7 @@ echo "    - Start ML service:    sudo systemctl enable --now noesc-ml-listener"
 echo "    - Check ML service:    sudo systemctl status noesc-ml-listener"
 echo "    - To edit whitelist:  nano /etc/noesc/suid_whitelist.conf"
 echo "    - ML env file:        nano /etc/noesc/ml_listener.env"
+echo "    - Project .env file:  nano $PROJECT_ROOT/.env"
 echo "    - Maintenance mode:   noesc-maint status|on 30m|off"
 echo "    - To view alerts:     cat /var/log/noesc_alerts.log"
 echo "----------------------------------------------------"

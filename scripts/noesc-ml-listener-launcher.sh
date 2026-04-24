@@ -1,13 +1,47 @@
 #!/bin/bash
 set -euo pipefail
 
-PROJECT_ROOT="${NOESC_PROJECT_ROOT:-/opt/noesc}"
-if [[ ! -d "$PROJECT_ROOT" && -d "/home/swuffles/Documents/NoEsc" ]]; then
-  PROJECT_ROOT="/home/swuffles/Documents/NoEsc"
+DEFAULT_PROJECT_ROOT="/opt/noesc"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+load_env_file() {
+  local env_file="$1"
+  if [[ -f "$env_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+  fi
+}
+
+# Allow development runs directly from repo scripts/ without requiring /etc env.
+if [[ -z "${NOESC_PROJECT_ROOT:-}" ]]; then
+  if [[ -f "$SCRIPT_DIR/../src/ml_engine/model_interface.py" ]]; then
+    NOESC_PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+  fi
 fi
+
+# Machine-level deployment config (optional).
+load_env_file "/etc/noesc/ml_listener.env"
+
+PROJECT_ROOT="${NOESC_PROJECT_ROOT:-$DEFAULT_PROJECT_ROOT}"
+
+# Project-level overrides (optional): lets deployment run from a repo .env file.
+load_env_file "$PROJECT_ROOT/.env"
+load_env_file "$PROJECT_ROOT/.env.local"
+load_env_file "$PROJECT_ROOT/config/ml_listener.env"
+
+PROJECT_ROOT="${NOESC_PROJECT_ROOT:-$PROJECT_ROOT}"
+LISTENER_REL_PATH="src/ml_engine/model_interface.py"
 
 if [[ ! -d "$PROJECT_ROOT" ]]; then
   echo "[-] NOESC_PROJECT_ROOT not found: $PROJECT_ROOT" >&2
+  exit 1
+fi
+
+if [[ ! -f "$PROJECT_ROOT/$LISTENER_REL_PATH" ]]; then
+  echo "[-] Listener entrypoint not found at: $PROJECT_ROOT/$LISTENER_REL_PATH" >&2
+  echo "    Check NOESC_PROJECT_ROOT in /etc/noesc/ml_listener.env" >&2
   exit 1
 fi
 
@@ -63,4 +97,4 @@ if [[ "$SHORT_MODEL_ENABLED" == "1" || "$SHORT_MODEL_ENABLED" == "true" || "$SHO
   fi
 fi
 
-exec "$PYTHON_BIN" src/ml_engine/model_interface.py "${args[@]}"
+exec "$PYTHON_BIN" "$LISTENER_REL_PATH" "${args[@]}"
