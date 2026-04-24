@@ -9,8 +9,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pwd
+import re
 import signal
 import socket
+import subprocess
 import time
 from collections import deque
 from typing import Any, Deque, Dict, List, Optional, Tuple
@@ -29,6 +32,9 @@ DEFAULT_POLL_SLEEP_SECONDS = 0.05
 DEFAULT_SHORT_SEQ_POLICY = "skip"
 DEFAULT_SHORT_MODEL_MAX_SEQ_LEN = 2
 DEFAULT_SHORT_MALICIOUS_SCORE_THRESHOLD: Optional[float] = None
+DEFAULT_NOTIFY_MALICIOUS = False
+DEFAULT_NOTIFY_COOLDOWN_SECONDS = 2.0
+DEFAULT_NOTIFY_CLOSE_SECONDS = 5.0
 
 DEFAULT_MODEL_CANDIDATES = (
     "models/v4_min3/svm_model.pkl",
@@ -89,6 +95,24 @@ def parse_optional_float(value: Optional[str], default: Optional[float] = None) 
         return float(text)
     except ValueError:
         return default
+
+
+def parse_bool(value: Optional[str], default: bool = False) -> bool:
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "disabled"}:
+        return False
+    return default
+
+
+def parse_float(value: Optional[str], default: float) -> float:
+    parsed = parse_optional_float(value, None)
+    if parsed is None:
+        return default
+    return float(parsed)
 
 
 def parse_args() -> argparse.Namespace:
@@ -184,7 +208,334 @@ def parse_args() -> argparse.Namespace:
             "When set, short-model predictions with pred=1 and score<threshold are demoted to benign."
         ),
     )
+    parser.add_argument(
+        "--notify-malicious",
+        action="store_true",
+        default=parse_bool(
+            os.environ.get("NOESC_ML_NOTIFY_MALICIOUS"),
+            DEFAULT_NOTIFY_MALICIOUS,
+        ),
+        help="Emit desktop notifications for ML malicious detections.",
+    )
+    parser.add_argument(
+        "--notify-cooldown-seconds",
+        type=float,
+        default=parse_float(
+            os.environ.get("NOESC_ML_NOTIFY_COOLDOWN_SECONDS"),
+            DEFAULT_NOTIFY_COOLDOWN_SECONDS,
+        ),
+        help="Minimum interval between ML malicious desktop notifications.",
+    )
+    parser.add_argument(
+        "--notify-close-seconds",
+        type=float,
+        default=parse_float(
+            os.environ.get("NOESC_ML_NOTIFY_CLOSE_SECONDS"),
+            DEFAULT_NOTIFY_CLOSE_SECONDS,
+        ),
+        help="Seconds before auto-closing ML desktop notifications via gdbus.",
+    )
     return parser.parse_args()
+
+
+class MlDesktopNotifier:
+    def __init__(self, enabled: bool, cooldown_seconds: float, close_seconds: float):
+        self.enabled = enabled
+        self.cooldown_seconds = max(0.0, float(cooldown_seconds))
+        self.close_seconds = max(0.0, float(close_seconds))
+        self.last_notify_ts = 0.0
+        self.warned_no_target = False
+
+    def notify_malicious(
+        self,
+        pid: str,
+        auid: str,
+        euid: str,
+        exe: str,
+        seq_len: int,
+        score_text: str,
+        model_source: str,
+        auth_failed_count: int,
+    ) -> None:
+        if not self.enabled:
+            return
+
+        now = time.monotonic()
+        if now - self.last_notify_ts < self.cooldown_seconds:
+            return
+
+        self.last_notify_ts = now
+
+        exe_text = exe if exe else "unknown"
+        auth_status = "failed" if auth_failed_count > 0 else "none"
+        title = "[NoEsc] ML MALICIOUS"
+        body = (
+            f"pid={pid} exe={exe_text} auid={auid or 'unknown'} euid={euid or 'unknown'} "
+            f"score={score_text} source={model_source} seq_len={seq_len} auth_failed={auth_status}"
+        )
+
+        if len(body) > 240:
+            body = body[:237] + "..."
+
+        self._dispatch_notify(title=title, body=body)
+
+    def _dispatch_notify(self, title: str, body: str) -> None:
+        try:
+            run_as_user: Optional[str] = None
+            env_pairs: List[str] = []
+
+            if os.geteuid() == 0:
+                target = self._resolve_graphical_user()
+                if target is not None:
+                    username, _uid, resolved_env = target
+                    run_as_user = username
+                    env_pairs = [f"{key}={value}" for key, value in resolved_env.items()]
+
+                elif not self.warned_no_target:
+                    print(
+                        "[!] ML notification: could not resolve active graphical user session; "
+                        "falling back to current service user",
+                        flush=True,
+                    )
+                    self.warned_no_target = True
+
+            notification_id = self._send_notification_via_gdbus(
+                title=title,
+                body=body,
+                run_as_user=run_as_user,
+                env_pairs=env_pairs,
+            )
+            if notification_id is not None and self.close_seconds > 0.0:
+                self._schedule_notification_close(
+                    notification_id=notification_id,
+                    run_as_user=run_as_user,
+                    env_pairs=env_pairs,
+                )
+        except Exception as exc:  # pragma: no cover
+            print(f"[!] ML notification dispatch failed: {exc}", flush=True)
+
+    def _build_gdbus_base(self) -> List[str]:
+        return [
+            "gdbus",
+            "call",
+            "--session",
+            "--dest",
+            "org.freedesktop.Notifications",
+            "--object-path",
+            "/org/freedesktop/Notifications",
+        ]
+
+    def _with_user_session_env(
+        self,
+        base_cmd: List[str],
+        run_as_user: Optional[str],
+        env_pairs: List[str],
+    ) -> List[str]:
+        if run_as_user is None:
+            return base_cmd
+        return ["runuser", "-u", run_as_user, "--", "env", *env_pairs, *base_cmd]
+
+    def _send_notification_via_gdbus(
+        self,
+        title: str,
+        body: str,
+        run_as_user: Optional[str],
+        env_pairs: List[str],
+    ) -> Optional[int]:
+        expire_timeout_ms = max(1000, int(self.close_seconds * 1000.0))
+        cmd = self._build_gdbus_base() + [
+            "--method",
+            "org.freedesktop.Notifications.Notify",
+            "NoEsc",
+            "0",
+            "dialog-error",
+            title,
+            body,
+            "[]",
+            "{'urgency': <byte 2>}",
+            f"int32 {expire_timeout_ms}",
+        ]
+        wrapped_cmd = self._with_user_session_env(cmd, run_as_user, env_pairs)
+        output = subprocess.check_output(
+            wrapped_cmd,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+
+        match = re.search(r"uint32\s+(\d+)", output)
+        if match is None:
+            return None
+        return int(match.group(1))
+
+    def _schedule_notification_close(
+        self,
+        notification_id: int,
+        run_as_user: Optional[str],
+        env_pairs: List[str],
+    ) -> None:
+        delay = f"{self.close_seconds:.3f}"
+        close_cmd = (
+            f"sleep {delay} && "
+            "gdbus call --session "
+            "--dest org.freedesktop.Notifications "
+            "--object-path /org/freedesktop/Notifications "
+            "--method org.freedesktop.Notifications.CloseNotification "
+            f"\"uint32 {notification_id}\""
+        )
+
+        if run_as_user is None:
+            wrapped_cmd = ["sh", "-c", close_cmd]
+        else:
+            wrapped_cmd = [
+                "runuser",
+                "-u",
+                run_as_user,
+                "--",
+                "env",
+                *env_pairs,
+                "sh",
+                "-c",
+                close_cmd,
+            ]
+
+        subprocess.Popen(
+            wrapped_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def _resolve_graphical_user(self) -> Optional[Tuple[str, int, Dict[str, str]]]:
+        # Preferred path: query systemd-logind for the active local user session
+        # (works for Wayland/X11 desktop sessions).
+        try:
+            sessions_output = subprocess.check_output(
+                ["loginctl", "list-sessions", "--no-legend"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+
+            for line in sessions_output.splitlines():
+                parts = line.split()
+                if not parts:
+                    continue
+
+                session_id = parts[0]
+                session_props_raw = subprocess.check_output(
+                    [
+                        "loginctl",
+                        "show-session",
+                        session_id,
+                        "-p",
+                        "Name",
+                        "-p",
+                        "User",
+                        "-p",
+                        "Active",
+                        "-p",
+                        "Class",
+                        "-p",
+                        "Remote",
+                        "-p",
+                        "Display",
+                        "-p",
+                        "Leader",
+                    ],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                )
+
+                session_props: Dict[str, str] = {}
+                for row in session_props_raw.splitlines():
+                    if "=" not in row:
+                        continue
+                    key, value = row.split("=", 1)
+                    session_props[key] = value
+
+                if session_props.get("Active") != "yes":
+                    continue
+                if session_props.get("Class") != "user":
+                    continue
+                if session_props.get("Remote") == "yes":
+                    continue
+
+                username = session_props.get("Name", "").strip()
+                uid_text = session_props.get("User", "").strip()
+                if not username or not uid_text:
+                    continue
+
+                uid = int(uid_text)
+                if uid < 1000:
+                    continue
+
+                runtime_dir = f"/run/user/{uid}"
+                user_bus_path = f"{runtime_dir}/bus"
+                if not os.path.exists(user_bus_path):
+                    continue
+
+                resolved_env: Dict[str, str] = {
+                    "DBUS_SESSION_BUS_ADDRESS": f"unix:path={user_bus_path}",
+                    "XDG_RUNTIME_DIR": runtime_dir,
+                }
+
+                leader_pid = session_props.get("Leader", "").strip()
+                if leader_pid.isdigit():
+                    try:
+                        with open(f"/proc/{leader_pid}/environ", "rb") as environ_file:
+                            environ_raw = environ_file.read().decode("utf-8", errors="ignore")
+
+                        for item in environ_raw.split("\x00"):
+                            if "=" not in item:
+                                continue
+                            key, value = item.split("=", 1)
+                            if key in {"DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"} and value:
+                                resolved_env[key] = value
+                    except Exception:
+                        pass
+
+                display_value = session_props.get("Display", "").strip()
+                if display_value and "DISPLAY" not in resolved_env:
+                    resolved_env["DISPLAY"] = display_value
+
+                return username, uid, resolved_env
+        except Exception:
+            pass
+
+        # Fallback path for environments without loginctl or incomplete session data.
+        try:
+            who_output = subprocess.check_output(
+                ["who"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            for line in who_output.splitlines():
+                parts = line.split()
+                if not parts:
+                    continue
+
+                username = parts[0]
+                if username == "root":
+                    continue
+
+                user_info = pwd.getpwnam(username)
+                uid = int(user_info.pw_uid)
+                if uid < 1000:
+                    continue
+
+                runtime_dir = f"/run/user/{uid}"
+                user_bus_path = f"{runtime_dir}/bus"
+                if not os.path.exists(user_bus_path):
+                    continue
+
+                resolved_env = {
+                    "DBUS_SESSION_BUS_ADDRESS": f"unix:path={user_bus_path}",
+                    "XDG_RUNTIME_DIR": runtime_dir,
+                }
+
+                return username, uid, resolved_env
+        except Exception:
+            return None
+
+        return None
 
 
 class NoEscModel:
@@ -278,6 +629,7 @@ class SequenceBuffer:
         emit_auth_only: bool,
         short_seq_policy: str,
         short_malicious_score_threshold: Optional[float],
+        notifier: MlDesktopNotifier,
     ):
         self.window_seconds = window_seconds
         self.ngram_size = ngram_size
@@ -288,6 +640,7 @@ class SequenceBuffer:
         self.emit_auth_only = emit_auth_only
         self.short_seq_policy = short_seq_policy
         self.short_malicious_score_threshold = short_malicious_score_threshold
+        self.notifier = notifier
         self.by_pid: Dict[str, Dict[str, object]] = {}
 
     def add_event(self, event: Dict[str, str]) -> None:
@@ -483,6 +836,18 @@ class SequenceBuffer:
             flush=True,
         )
 
+        if prediction == 1:
+            self.notifier.notify_malicious(
+                pid=pid,
+                auid=latest_auid,
+                euid=latest_euid,
+                exe=latest_exe,
+                seq_len=len(syscall_seq),
+                score_text=score_text,
+                model_source=model_source,
+                auth_failed_count=auth_failed_count,
+            )
+
 
 def normalize_event(payload: Dict[str, object]) -> Dict[str, str]:
     event = {field: str(payload.get(field, "")).strip() for field in REQUIRED_FIELDS}
@@ -512,6 +877,7 @@ def run_listener(
     emit_auth_only: bool,
     short_seq_policy: str,
     short_malicious_score_threshold: Optional[float],
+    notifier: MlDesktopNotifier,
 ) -> None:
     remove_stale_socket(socket_path)
 
@@ -539,6 +905,7 @@ def run_listener(
         emit_auth_only=emit_auth_only,
         short_seq_policy=short_seq_policy,
         short_malicious_score_threshold=short_malicious_score_threshold,
+        notifier=notifier,
     )
 
     try:
@@ -610,6 +977,20 @@ def main() -> None:
             flush=True,
         )
 
+    if args.notify_malicious:
+        print(
+            "[*] ML malicious desktop notification enabled "
+            f"(cooldown={max(0.0, args.notify_cooldown_seconds):.2f}s "
+            f"close={max(0.0, args.notify_close_seconds):.2f}s)",
+            flush=True,
+        )
+
+    notifier = MlDesktopNotifier(
+        enabled=args.notify_malicious,
+        cooldown_seconds=max(0.0, args.notify_cooldown_seconds),
+        close_seconds=max(0.0, args.notify_close_seconds),
+    )
+
     run_listener(
         socket_path=args.socket_path,
         window_seconds=args.window_seconds,
@@ -621,6 +1002,7 @@ def main() -> None:
         emit_auth_only=args.emit_auth_only,
         short_seq_policy=args.short_seq_policy,
         short_malicious_score_threshold=args.short_malicious_score_threshold,
+        notifier=notifier,
     )
 
 

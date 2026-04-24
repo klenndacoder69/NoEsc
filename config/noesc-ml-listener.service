@@ -1,7 +1,7 @@
 [Unit]
 Description=NoEsc Machine Learning Listener
-After=network.target auditd.service
-Wants=auditd.service
+After=network.target auditd.service systemd-logind.service
+Wants=auditd.service systemd-logind.service
 
 [Service]
 Type=simple
