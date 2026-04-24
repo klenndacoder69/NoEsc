@@ -11,12 +11,15 @@ __pycache__/
 # VE's
 venv/
 env/
+.env
 
 # datasets 
 data/
 *.log
 *.csv
 
+# references
+refs/
 # trained models
 # models/*.pkl
 
