@@ -540,6 +540,36 @@ For the specific context of an academic laboratory environment like the UPLB ICS
 \end{enumerate}
 
 % CONCLUSION AND FUTURE WORK
+\section{Conclusion and Future Work}
+
+\subsection{Conclusion}
+
+This study designed, implemented, and comparatively evaluated two detection methodologies for privilege escalation on Linux: a heuristic rule-based engine and an SVM-based machine learning engine. The system was deployed as a lightweight, user-space daemon integrated with the native Linux Audit framework via the \texttt{audispd} plugin interface.
+
+The rule-based engine achieved 100\% True Positive Rate on all three targeted attack vectors (SUID abuse, sudo misuse, and sensitive file tampering) with zero false positives, validating its suitability for high-confidence alerting on known threats. The machine learning engine, using the best-performing v4 model (F1 = 0.998, MCC = 0.995), demonstrated strong offline classification performance but produced approximately 15$\times$ more alerts than the rule engine when deployed on a mixed workload containing real university lab traffic.
+
+This alert volume difference is not a deficiency of either approach but rather a manifestation of a fundamental precision-coverage tradeoff: the rule engine evaluates events against three narrow, deterministic patterns, while the ML engine classifies every process's behavioral sequence, inevitably producing false positives on benign system processes whose syscall patterns overlap with attack signatures in the TF-IDF feature space. This finding empirically demonstrates the tradeoff between interpretability and coverage that motivates hybrid detection architectures.
+
+For the specific context of an academic laboratory environment, the hybrid approach---combining high-confidence rule-based alerting on known vectors with broader ML-based background monitoring---offers the most practical balance between detection coverage and administrator alert fatigue.
+
+\subsection{Future Work}
+
+Based on the experimental findings, several improvements are recommended to enhance the ML engine's precision in live deployment. The first of these was implemented as part of this study; the remainder are proposed as future extensions.
+
+\begin{enumerate}
+    \item \textbf{Process-Aware Whitelisting (Implemented).} An ML-level process whitelist was implemented to address the primary source of false positives: known system processes (e.g., \texttt{fuser}, \texttt{fusermount3}, \texttt{gdm-session-worker}, \texttt{snap}, \texttt{systemd-executor}) whose privileged syscall patterns resemble attack signatures. The whitelist is stored in a configuration file (\texttt{/etc/noesc/ml\_process\_whitelist.conf}) and supports both exact path matches and prefix-based matches. At runtime, the ML listener checks each process's executable path against the whitelist before inference, skipping whitelisted processes entirely. When evaluated on the same mixed workload, the whitelist reduced mean ML alerts from 89 to 28---a 68\% reduction---narrowing the ML-to-rules alert ratio from approximately 13:1 to 4:1 while preserving all true positive detections.
+
+    \item \textbf{Larger and More Diverse Training Data.} All training data was collected from a single UPLB ICS laboratory site. Expanding the dataset to include benign activity from multiple environments (different lab configurations, server workloads, different academic semesters) would improve the model's generalization and reduce false positives on unfamiliar but legitimate system activity.
+
+    \item \textbf{Recursive Feature Elimination (RFE).} RFE was proposed in the original design but not implemented due to the sufficient discrimination achieved by (2,3)-gram TF-IDF with contextual features. Applying RFE would prune noisy n-gram features that contribute to false positives, potentially improving precision without sacrificing recall \cite{patel2024}.
+
+    \item \textbf{Calibrated Confidence Thresholds.} The current dual-model architecture uses a score-based demotion threshold for short sequences. Extending this approach to the primary model using Platt scaling would convert raw SVM decision scores into calibrated probabilities, enabling tiered alerting (e.g., high-confidence alerts for scores above 0.9, suppression below 0.7) and reducing alert fatigue.
+
+    \item \textbf{Per-Process Feature Enrichment.} Augmenting the feature vector with process-level context---such as executable path classification (system binary vs.\ user-writable path), parent process identity, and user session type---would give the model stronger discriminative signals between legitimate privileged operations and actual privilege escalation attacks.
+
+    \item \textbf{Online Incremental Learning.} The current model is static after training. An online learning approach that adapts to the specific host's behavioral baseline over time would allow the model to learn that a particular machine's recurring daemon patterns are benign, reducing false positives without manual intervention.
+\end{enumerate}
+
 
 % APPENDICES
 % BIBLIOGRAPHY

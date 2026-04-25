@@ -35,6 +35,11 @@ DEFAULT_SHORT_MALICIOUS_SCORE_THRESHOLD: Optional[float] = None
 DEFAULT_NOTIFY_MALICIOUS = False
 DEFAULT_NOTIFY_COOLDOWN_SECONDS = 2.0
 DEFAULT_NOTIFY_CLOSE_SECONDS = 5.0
+DEFAULT_ML_PROCESS_WHITELIST_PATH = "/etc/noesc/ml_process_whitelist.conf"
+DEFAULT_ML_PROCESS_WHITELIST_CANDIDATES = (
+    "/etc/noesc/ml_process_whitelist.conf",
+    "config/ml_process_whitelist.conf",
+)
 
 DEFAULT_MODEL_CANDIDATES = (
     "models/v4_min3/svm_model.pkl",
@@ -113,6 +118,41 @@ def parse_float(value: Optional[str], default: float) -> float:
     if parsed is None:
         return default
     return float(parsed)
+
+
+def load_ml_process_whitelist(path: str) -> tuple[set[str], list[str]]:
+    """Load the ML process whitelist from a config file.
+
+    Returns (exact_matches, prefix_matches) where:
+    - exact_matches: set of full paths to skip
+    - prefix_matches: list of path prefixes to skip (entries ending with '/')
+    """
+    exact: set[str] = set()
+    prefixes: list[str] = []
+
+    if not os.path.exists(path):
+        return exact, prefixes
+
+    with open(path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            entry = line.strip()
+            if not entry or entry.startswith("#"):
+                continue
+            if entry.endswith("/"):
+                prefixes.append(entry)
+            else:
+                exact.add(entry)
+
+    return exact, prefixes
+
+
+def is_exe_whitelisted(exe: str, exact: set[str], prefixes: list[str]) -> bool:
+    """Check if an executable path is in the ML process whitelist."""
+    if not exe:
+        return False
+    if exe in exact:
+        return True
+    return any(exe.startswith(prefix) for prefix in prefixes)
 
 
 def parse_args() -> argparse.Namespace:
@@ -234,6 +274,14 @@ def parse_args() -> argparse.Namespace:
             DEFAULT_NOTIFY_CLOSE_SECONDS,
         ),
         help="Seconds before auto-closing ML desktop notifications via gdbus.",
+    )
+    parser.add_argument(
+        "--process-whitelist-path",
+        default=os.environ.get(
+            "NOESC_ML_PROCESS_WHITELIST_PATH",
+            pick_first_existing(DEFAULT_ML_PROCESS_WHITELIST_CANDIDATES),
+        ),
+        help="Path to ML process whitelist config file. Executables listed are skipped.",
     )
     return parser.parse_args()
 
@@ -630,6 +678,8 @@ class SequenceBuffer:
         short_seq_policy: str,
         short_malicious_score_threshold: Optional[float],
         notifier: MlDesktopNotifier,
+        whitelist_exact: Optional[set] = None,
+        whitelist_prefixes: Optional[list] = None,
     ):
         self.window_seconds = window_seconds
         self.ngram_size = ngram_size
@@ -641,6 +691,9 @@ class SequenceBuffer:
         self.short_seq_policy = short_seq_policy
         self.short_malicious_score_threshold = short_malicious_score_threshold
         self.notifier = notifier
+        self.whitelist_exact: set[str] = whitelist_exact or set()
+        self.whitelist_prefixes: list[str] = whitelist_prefixes or []
+        self.whitelist_skip_count = 0
         self.by_pid: Dict[str, Dict[str, object]] = {}
 
     def add_event(self, event: Dict[str, str]) -> None:
@@ -729,6 +782,17 @@ class SequenceBuffer:
         latest_auid = str(next((auid for auid in reversed(auids) if auid != -1), ""))
         latest_euid = str(next((euid for euid in reversed(euids) if euid != -1), ""))
         latest_exe = next((exe for exe in reversed(exes) if exe), "")
+
+        # --- Process whitelist gate ---
+        if is_exe_whitelisted(latest_exe, self.whitelist_exact, self.whitelist_prefixes):
+            self.whitelist_skip_count += 1
+            if self.whitelist_skip_count <= 5 or self.whitelist_skip_count % 100 == 0:
+                print(
+                    f"[ML-WHITELIST] pid={pid} exe={latest_exe} skipped "
+                    f"(total_skipped={self.whitelist_skip_count})",
+                    flush=True,
+                )
+            return
 
         syscall_seq = [
             str(event.get("syscall", ""))
@@ -878,6 +942,8 @@ def run_listener(
     short_seq_policy: str,
     short_malicious_score_threshold: Optional[float],
     notifier: MlDesktopNotifier,
+    whitelist_exact: Optional[set] = None,
+    whitelist_prefixes: Optional[list] = None,
 ) -> None:
     remove_stale_socket(socket_path)
 
@@ -906,6 +972,8 @@ def run_listener(
         short_seq_policy=short_seq_policy,
         short_malicious_score_threshold=short_malicious_score_threshold,
         notifier=notifier,
+        whitelist_exact=whitelist_exact,
+        whitelist_prefixes=whitelist_prefixes,
     )
 
     try:
@@ -947,6 +1015,18 @@ def run_listener(
 
 def main() -> None:
     args = parse_args()
+
+    # Load ML process whitelist
+    wl_exact, wl_prefixes = load_ml_process_whitelist(args.process_whitelist_path)
+    wl_total = len(wl_exact) + len(wl_prefixes)
+    if wl_total > 0:
+        print(
+            f"[*] ML process whitelist loaded: {len(wl_exact)} exact + "
+            f"{len(wl_prefixes)} prefix entries from {args.process_whitelist_path}",
+            flush=True,
+        )
+    else:
+        print("[*] ML process whitelist: empty or not found", flush=True)
 
     model = NoEscModel(
         model_path=args.model_path,
@@ -1003,6 +1083,8 @@ def main() -> None:
         short_seq_policy=args.short_seq_policy,
         short_malicious_score_threshold=args.short_malicious_score_threshold,
         notifier=notifier,
+        whitelist_exact=wl_exact,
+        whitelist_prefixes=wl_prefixes,
     )
 
 

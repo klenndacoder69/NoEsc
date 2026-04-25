@@ -52,6 +52,12 @@ mkdir -p /etc/noesc
 cp config/suid_whitelist.conf /etc/noesc/
 chmod 644 /etc/noesc/suid_whitelist.conf
 
+# ML process whitelist — skip inference on known-safe system daemons.
+if [ ! -f /etc/noesc/ml_process_whitelist.conf ]; then
+    cp config/ml_process_whitelist.conf /etc/noesc/
+fi
+chmod 644 /etc/noesc/ml_process_whitelist.conf
+
 # Default deployed engine mode for audisp plugin wrapper.
 if [ ! -f /etc/noesc/engine_mode ]; then
     echo "hybrid" > /etc/noesc/engine_mode

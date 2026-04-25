@@ -71,6 +71,7 @@ def parse_ml_listener_log(path: Path) -> Dict[str, float]:
         "ml_total_detect": 0,
         "ml_evaluated": 0,
         "ml_skipped": 0,
+        "ml_whitelist_skipped": 0,
         "ml_benign": 0,
         "ml_malicious": 0,
         "ml_source_short": 0,
@@ -100,6 +101,10 @@ def parse_ml_listener_log(path: Path) -> Dict[str, float]:
                     auth_failed = 0
                 if auth_failed > 0:
                     metrics["ml_auth_only_failed"] += 1
+                continue
+
+            if line.startswith("[ML-WHITELIST]"):
+                metrics["ml_whitelist_skipped"] += 1
                 continue
 
             if not line.startswith("[ML-DETECT]"):
@@ -255,6 +260,8 @@ def run_ml_repeat(
         "2",
         "--short-malicious-score-threshold",
         f"{threshold}",
+        "--process-whitelist-path",
+        str(root / "config" / "ml_process_whitelist.conf"),
     ]
 
     with listener_log.open("w", encoding="utf-8") as listener_handle:
