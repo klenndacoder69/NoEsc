@@ -51,19 +51,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Compiling the Daemon
+### Compiling the Daemon Manually
 
-**Option 1: Using CMake**
+If you prefer to compile the daemon without using the installation script:
+
 ```bash
-mkdir build && cd build
-cmake ..
+make clean
 make
 ```
-
-**Option 2: Using G++ Directly**
-```bash
-g++ -std=c++17 src/daemon/main.cpp src/daemon/parser.cpp src/daemon/rules_engine.cpp src/daemon/uds_bridge.cpp -o noesc_daemon -I src/daemon
-```
+This will use the provided `Makefile` to compile the C++ source code and output the `noesc_daemon` executable in the root directory.
 
 ## Configuration
 
