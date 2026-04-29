@@ -42,6 +42,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <syslog.h>
 #include <unistd.h>
 
@@ -479,6 +480,7 @@ void RulesEngine::alert(const std::string &vector, const std::string &msg,
 void RulesEngine::send_desktop_notification(const std::string &title,
                                             const std::string &body,
                                             AlertSeverity severity) {
+  const bool notify_debug = (std::getenv("NOESC_NOTIFY_DEBUG") != nullptr);
   std::string urgency = "normal";
   std::string icon = "dialog-warning";
 
@@ -493,19 +495,16 @@ void RulesEngine::send_desktop_notification(const std::string &title,
    * the notification closes automatically
    */
   // code referenced from the user @Madacol (https://askubuntu.com/a/1525890)
-  // gdbus call \
-  //       --session \
-  //       --dest org.freedesktop.Notifications \
-  //       --object-path /org/freedesktop/Notifications \
-  //       --method org.freedesktop.Notifications.Notify \
-  //       "App_name" 0 "audio-headphones" "Title" "Message" '[]' '{}' 5000 \
-  //   | sed -E 's/.uint32 ([0-9]+).*/\1/' \
-  //   | xargs -I{notification_id} sh -c 'sleep 1 && gdbus call \
-  //       --session \
-  //       --dest org.freedesktop.Notifications \
-  //       --object-path /org/freedesktop/Notifications \
-  //       --method org.freedesktop.Notifications.CloseNotification
-  //       {notification_id}'
+  // Example gdbus flow (line breaks for readability):
+  //   gdbus call --session --dest org.freedesktop.Notifications
+  //     --object-path /org/freedesktop/Notifications
+  //     --method org.freedesktop.Notifications.Notify
+  //     "App_name" 0 "audio-headphones" "Title" "Message" '[]' '{}' 5000
+  //   | sed -E 's/.uint32 ([0-9]+).*/\\1/'
+  //   | xargs -I{notification_id} sh -c 'sleep 1 && gdbus call --session
+  //       --dest org.freedesktop.Notifications
+  //       --object-path /org/freedesktop/Notifications
+  //       --method org.freedesktop.Notifications.CloseNotification {notification_id}'
 
   std::string notify_sleep_cmd =
       " | xargs -r -I{} sh -c \"sleep " + std::to_string(NOTIFICATION_DELAY) +
@@ -546,27 +545,54 @@ void RulesEngine::send_desktop_notification(const std::string &title,
   }
 
   if (getuid() == 0) {
-    FILE *who_pipe =
-        popen("who | grep '(:' | awk '{print $1}' | head -n1", "r");
-    if (!who_pipe)
-      return;
+    auto resolve_target_user = [&]() -> std::optional<std::string> {
+      const char *notify_user = std::getenv("NOESC_NOTIFY_USER");
+      if (notify_user != nullptr && notify_user[0] != '\0') {
+        return std::string(notify_user);
+      }
 
-    char username[256] = {0};
-    if (fgets(username, sizeof(username), who_pipe) == nullptr) {
+      const char *sudo_user = std::getenv("SUDO_USER");
+      if (sudo_user != nullptr && sudo_user[0] != '\0') {
+        return std::string(sudo_user);
+      }
+
+      FILE *who_pipe =
+          popen("who | grep '(:' | awk '{print $1}' | head -n1", "r");
+      if (!who_pipe) {
+        return std::nullopt;
+      }
+
+      char username[256] = {0};
+      if (fgets(username, sizeof(username), who_pipe) == nullptr) {
+        pclose(who_pipe);
+        return std::nullopt;
+      }
       pclose(who_pipe);
+
+      size_t len = strlen(username);
+      if (len > 0 && username[len - 1] == '\n') {
+        username[len - 1] = '\0';
+      }
+
+      if (strlen(username) == 0) {
+        return std::nullopt;
+      }
+
+      return std::string(username);
+    };
+
+    auto resolved_user = resolve_target_user();
+    if (!resolved_user.has_value()) {
+      if (notify_debug) {
+        std::cerr << "[!] notify: could not resolve target GUI user (try setting "
+                     "NOESC_NOTIFY_USER or SUDO_USER; export NOESC_NOTIFY_DEBUG=1 "
+                     "to inspect)"
+                  << std::endl;
+      }
       return;
     }
-    pclose(who_pipe);
 
-    size_t len = strlen(username);
-    if (len > 0 && username[len - 1] == '\n') {
-      username[len - 1] = '\0';
-    }
-
-    if (strlen(username) == 0)
-      return;
-
-    FILE *uid_pipe = popen(("id -u " + std::string(username)).c_str(), "r");
+    FILE *uid_pipe = popen(("id -u " + *resolved_user).c_str(), "r");
     if (!uid_pipe)
       return;
 
@@ -583,23 +609,46 @@ void RulesEngine::send_desktop_notification(const std::string &title,
 
     // Used export since session will be a root ran in a program. since there are multiple commands that are being ran, using export we guarantee that 
     // the next processes would get the DBUS session address.
-    std::string notify_cmd =
-        "su " + std::string(username) +
-      " -c 'export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/" +
-      std::string(uid_str) +
-      "/bus; notify-send -p --app-name=NoEsc --urgency=" + urgency +
-        " --icon=" + icon + " \"" + safe_title + "\"" + " \"" + safe_body +
-        "\" 2>/dev/null" + notify_sleep_cmd + " >/dev/null 2>&1' &";
+    const std::string redirect_suffix =
+        notify_debug ? "" : (" 2>/dev/null" + notify_sleep_cmd + " >/dev/null 2>&1");
+    const std::string notify_pipeline_suffix =
+        notify_debug ? notify_sleep_cmd : "";
 
-    system(notify_cmd.c_str());
+    std::string notify_cmd =
+        "su " + *resolved_user +
+        " -c 'export XDG_RUNTIME_DIR=/run/user/" + std::string(uid_str) +
+        "; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/" +
+        std::string(uid_str) +
+        "/bus; notify-send -p --app-name=NoEsc --urgency=" + urgency +
+        " --icon=" + icon + " \"" + safe_title + "\"" + " \"" + safe_body +
+        "\"" + notify_pipeline_suffix + redirect_suffix + "' &";
+
+    int rc = system(notify_cmd.c_str());
+    if (notify_debug && rc != 0) {
+      std::cerr << "[!] notify: notify-send pipeline returned rc=" << rc
+                << std::endl;
+      syslog(LOG_WARNING, "noesc notify: notify-send pipeline returned rc=%d",
+             rc);
+    }
 
   } else {
+    const std::string redirect_suffix =
+        notify_debug ? "" : (" 2>/dev/null" + notify_sleep_cmd + " >/dev/null 2>&1");
+    const std::string notify_pipeline_suffix =
+        notify_debug ? notify_sleep_cmd : "";
+
     std::string notify_cmd =
         "notify-send -p --app-name=NoEsc --urgency=" + urgency +
         " --icon=" + icon + " \"" + safe_title + "\"" + " \"" + safe_body +
-        "\" 2>/dev/null" + notify_sleep_cmd + " >/dev/null 2>&1 &";
+        "\"" + notify_pipeline_suffix + redirect_suffix + " &";
 
-    system(notify_cmd.c_str());
+    int rc = system(notify_cmd.c_str());
+    if (notify_debug && rc != 0) {
+      std::cerr << "[!] notify: notify-send pipeline returned rc=" << rc
+                << std::endl;
+      syslog(LOG_WARNING, "noesc notify: notify-send pipeline returned rc=%d",
+             rc);
+    }
   }
 
   usleep(150000);
