@@ -148,6 +148,18 @@ else
     exit 1
 fi
 
+echo "[*] Step 5.5: Injecting Audit Rules..."
+if [ -d "/etc/audit/rules.d" ]; then
+    cp config/noesc.rules /etc/audit/rules.d/99-noesc.rules
+    chmod 640 /etc/audit/rules.d/99-noesc.rules
+    if command -v augenrules >/dev/null 2>&1; then
+        echo "    Reloading audit rules..."
+        augenrules --load > /dev/null 2>&1 || true
+    fi
+else
+    echo "[-] /etc/audit/rules.d not found. Rule injection skipped."
+fi
+
 echo "[*] Step 5b: Installing ML listener systemd unit..."
 if command -v systemctl >/dev/null 2>&1; then
     cp config/noesc-ml-listener.service /etc/systemd/system/noesc-ml-listener.service

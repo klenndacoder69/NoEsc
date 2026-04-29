@@ -1,0 +1,27 @@
+## NoEsc Detection Rules
+## These rules ensure auditd logs the necessary SYSCALLs and path watches
+## for both the NoEsc ML Engine and Rule-based Engine to function.
+
+-D
+-b 8192
+-f 1
+
+## --- RULESET ---
+
+## 1. CAPTURE COMMAND EXECUTION (For N-Gram/ML)
+## Only capture Human Users (auid >= 1000)
+-a always,exit -F arch=b64 -S execve,execveat -F auid>=1000 -F auid!=-1 -k benign_exec
+-a always,exit -F arch=b32 -S execve,execveat -F auid>=1000 -F auid!=-1 -k benign_exec
+
+## 2. CAPTURE PRIVILEGE CHANGES
+-a always,exit -F arch=b64 -S setuid,setgid,setreuid,setregid -F auid>=1000 -F auid!=-1 -k benign_priv
+-a always,exit -F arch=b32 -S setuid,setgid,setreuid,setregid -F auid>=1000 -F auid!=-1 -k benign_priv
+
+## 3. CAPTURE PERMISSION CHANGES
+-a always,exit -F arch=b64 -S chmod,fchmod,fchmodat,chown,fchown,fchownat -F auid>=1000 -F auid!=-1 -k benign_perm
+-a always,exit -F arch=b32 -S chmod,fchmod,fchmodat,chown,fchown,fchownat -F auid>=1000 -F auid!=-1 -k benign_perm
+
+## 4. SENSITIVE FILE WATCHES (Targeted Tampering Detection for Rule Engine)
+-w /etc/passwd -p wa -k identitychange
+-w /etc/shadow -p wa -k identitychange
+-w /etc/sudoers -p wa -k sudochange
