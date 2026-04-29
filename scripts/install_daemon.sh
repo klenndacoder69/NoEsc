@@ -16,7 +16,7 @@ echo "[*] Step 0: Installing and verifying system dependencies..."
 if command -v apt-get >/dev/null 2>&1; then
     echo "    Detected apt-based system. Attempting automatic dependency installation..."
     apt-get update -qq || true
-    if ! apt-get install -yq g++ make auditd audispd-plugins python3 python3-venv python3-pip libnotify-bin dbus-user-session; then
+    if ! apt-get install -yq g++ make auditd audispd-plugins python3 python3-venv python3-pip libnotify-bin dbus-user-session ripgrep; then
         echo "[!] Warning: Automatic installation via apt-get failed."
         INSTALL_FAILED=1
     fi
