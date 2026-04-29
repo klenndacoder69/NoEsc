@@ -1,28 +1,55 @@
-# Linux Privilege Escalation Detector
+# NoEsc: Linux Privilege Escalation Detector
 
-## Project Overview
+**NoEsc** is a specialized security tool designed to detect and identify privilege escalation attempts and vulnerabilities in Linux systems in real-time. It uses a **Hybrid Detection Engine**, combining deterministic rule-based heuristics with machine learning (TF-IDF + SVM) to catch both known exploits and zero-day anomalies.
 
-**NoEsc** is a specialized security tool designed to detect and identify privilege escalation attempts and vulnerabilities in Linux systems. This project serves as an Undergraduate Thesis for the Computer Science program at the University of the Philippines Los Baños (UPLB), Institute of Computer Science.
+---
 
-## Author
+## Quick Start (Automated Installation)
 
-**Klenn Jakek V. Borja and Joseph Anthony C. Hermocilla**  
-University of the Philippines Los Baños (UPLB)  
-Institute of Computer Science  
-Email: [kvborja@up.edu.ph](mailto:kvborja@up.edu.ph)
+The fastest way to get NoEsc running on your machine is using our automated installation script. 
 
-## Legal Disclaimer
+**For Debian/Ubuntu-based distributions:**
+```bash
+git clone https://github.com/klenndacoder69/NoEsc.git
+cd NoEsc
+sudo ./scripts/install_daemon.sh
+```
+*This script will automatically install all system dependencies (`g++`, `auditd`, etc.), create a Python virtual environment, install ML requirements, compile the C++ daemon, and configure systemd and auditd to run NoEsc in the background.*
 
-This tool is provided for **educational and authorized security testing purposes only** as part of an undergraduate thesis at UPLB. 
+## Key Features
 
-**Important:** You may only use NoEsc on systems you own or have explicit written permission to test. Unauthorized access to computer systems is illegal and unethical. The authors assume no liability for misuse, damage, or legal consequences resulting from the unauthorized use of this tool.
+- **Hybrid Engine**: Uses both C++ rules for instant alerts and Python ML for behavioral anomaly detection.
+- **Process-Aware Whitelisting**: Skips known benign system daemons (like `snap`, `fuser`, `cron`) to drastically reduce ML false positives.
+- **Desktop Notifications**: Real-time popups when an escalation or suspicious sequence is detected.
+- **Live Mode Switching**: Hot-swap between `hybrid`, `ml-only`, and `rules-only` without restarting.
 
-## Build Instructions
+---
 
-### Prerequisites
-- `auditd` and `audispd-plugins`
-- C++17 compliant compiler (g++ or clang)
-- CMake (optional)
+## Manual Build Instructions
+
+If you are not using an Ubuntu/Debian environment, or prefer to build NoEsc manually, follow these steps.
+
+### 1. Prerequisites
+
+**Manual Installation Examples:**
+
+*   **Arch Linux:**
+    ```bash
+    sudo pacman -S gcc make audit python python-pip libnotify
+    ```
+
+*   **Fedora/RHEL:**
+    ```bash
+    sudo dnf install gcc-c++ make audit python3 python3-pip libnotify dbus-x11
+    ```
+
+### 2. Python Environment
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
 ### Compiling the Daemon
 
@@ -225,6 +252,20 @@ sudo noesc-maint off
 Notes:
 - The helper writes the TTL file used by the daemon: `/etc/noesc/sudo_maintenance_mode.until`.
 - The daemon checks this state periodically and suppresses SudoMisuse desktop popups while active.
+
+---
+
+## Academic Context & Authors
+
+This project serves as an Undergraduate Thesis for the Computer Science program at the University of the Philippines Los Baños (UPLB), Institute of Computer Science.
+
+**Authors:** Klenn Jakek V. Borja and Joseph Anthony C. Hermocilla  
+**Institution:** University of the Philippines Los Baños (UPLB)  
+**Email:** [kvborja@up.edu.ph](mailto:kvborja@up.edu.ph)
+
+## Legal Disclaimer
+
+This tool is provided for **educational and authorized security testing purposes only**. You may only use NoEsc on systems you own or have explicit written permission to test. Unauthorized access to computer systems is illegal and unethical. The authors assume no liability for misuse, damage, or legal consequences resulting from the unauthorized use of this tool.
 
 ## License
 

@@ -12,6 +12,46 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+echo "[*] Step 0: Installing and verifying system dependencies..."
+if command -v apt-get >/dev/null 2>&1; then
+    echo "    Detected apt-based system. Attempting automatic dependency installation..."
+    apt-get update -qq || true
+    if ! apt-get install -yq g++ make auditd audispd-plugins python3 python3-venv python3-pip libnotify-bin dbus-x11; then
+        echo "[!] Warning: Automatic installation via apt-get failed."
+        INSTALL_FAILED=1
+    fi
+else
+    echo "[!] Warning: 'apt-get' not found. Automatic dependency installation is only supported on Debian/Ubuntu."
+    INSTALL_FAILED=1
+fi
+
+if [ "${INSTALL_FAILED:-0}" -eq 1 ]; then
+    echo "----------------------------------------------------------------------"
+    echo "Refer to README.md and ensure the following system dependencies are installed: "
+    echo "  - C++ Compiler and Make (g++, make)"
+    echo "  - Audit daemon and plugins (auditd, audispd-plugins)"
+    echo "  - Python 3 and venv (python3, python3-venv, python3-pip)"
+    echo "  - Desktop notification tools (libnotify-bin, dbus-x11)"
+    echo "----------------------------------------------------------------------"
+    read -p "Press [Enter] to continue if you have already installed these, or Ctrl+C to abort..."
+fi
+
+echo "[*] Step 0.5: Setting up Python ML environment..."
+if [ ! -d ".venv" ]; then
+    echo "    Creating virtual environment at .venv..."
+    if ! python3 -m venv .venv; then
+        echo "[-] Failed to create Python virtual environment. Please install python3-venv manually."
+        exit 1
+    fi
+fi
+echo "    Installing Python requirements..."
+# We explicitly use the venv pip so we don't pollute the system python
+if ! .venv/bin/pip install -q -r requirements.txt; then
+    echo "[-] Failed to automatically install Python requirements."
+    echo "    Please run: source .venv/bin/activate && pip install -r requirements.txt manually."
+    exit 1
+fi
+
 echo "[*] Step 1: Compiling NoEsc Daemon..."
 make clean > /dev/null
 make
