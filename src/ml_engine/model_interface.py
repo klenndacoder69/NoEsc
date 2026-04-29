@@ -120,6 +120,23 @@ def parse_float(value: Optional[str], default: float) -> float:
     return float(parsed)
 
 
+def is_maintenance_mode_active() -> bool:
+    """Check if the global NoEsc maintenance mode is active."""
+    maint_file = "/etc/noesc/sudo_maintenance_mode.until"
+    if not os.path.exists(maint_file):
+        return False
+    try:
+        with open(maint_file, "r", encoding="utf-8") as f:
+            line = f.readline().strip()
+            if line.startswith("until_epoch="):
+                until_epoch = float(line.split("=")[1])
+                if time.time() < until_epoch:
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 def load_ml_process_whitelist(path: str) -> tuple[set[str], list[str]]:
     """Load the ML process whitelist from a config file.
 
@@ -306,6 +323,9 @@ class MlDesktopNotifier:
         auth_failed_count: int,
     ) -> None:
         if not self.enabled:
+            return
+
+        if is_maintenance_mode_active():
             return
 
         now = time.monotonic()

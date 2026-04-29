@@ -74,7 +74,8 @@ bool UdsBridge::initialize() {
     return false;
   }
 
-  // Copy path into sockaddr_un buffer. One byte is reserved for null terminator.
+  // Copy path into sockaddr_un buffer. One byte is reserved for null
+  // terminator.
   std::strncpy(remote_addr_.sun_path, socket_path_.c_str(),
                sizeof(remote_addr_.sun_path) - 1);
   return true;
@@ -99,7 +100,8 @@ void UdsBridge::send_event(const LogEvent &event) {
   std::string payload = build_payload_json(event);
 
   // sendto(...) sends one message to remote_addr_.
-  // reinterpret_cast converts sockaddr_un* to generic sockaddr* required by API.
+  // reinterpret_cast converts sockaddr_un* to generic sockaddr* required by
+  // API.
   ssize_t sent =
       ::sendto(sock_fd_, payload.data(), payload.size(), 0,
                reinterpret_cast<const struct sockaddr *>(&remote_addr_),
@@ -145,10 +147,9 @@ bool UdsBridge::is_offline_error(int errnum) const {
 // Print "ML Bridge Offline" at most once per cooldown window.
 void UdsBridge::maybe_log_offline(int errnum) {
   // steady_clock is monotonic (not affected by wall-clock jumps).
-  long now_secs =
-      std::chrono::duration_cast<std::chrono::seconds>(
-          std::chrono::steady_clock::now().time_since_epoch())
-          .count();
+  long now_secs = std::chrono::duration_cast<std::chrono::seconds>(
+                      std::chrono::steady_clock::now().time_since_epoch())
+                      .count();
 
   if (offline_logged_ &&
       (now_secs - last_offline_log_secs_) < OFFLINE_LOG_COOLDOWN_SECS) {
@@ -173,14 +174,14 @@ std::string UdsBridge::build_payload_json(const LogEvent &event) const {
   // ostringstream is used for clear, explicit JSON assembly.
   std::ostringstream json;
   json << "{"
-      << "\"type\":\"" << escape_json(event.type) << "\","
-      << "\"syscall\":\"" << escape_json(syscall_value) << "\","
-      << "\"res\":\"" << escape_json(event.res) << "\","
-       << "\"auid\":\"" << escape_json(std::to_string(event.auid))
-       << "\"," << "\"euid\":\"" << escape_json(std::to_string(event.euid))
-       << "\"," << "\"exe\":\"" << escape_json(event.exe) << "\","
-      << "\"pid\":\"" << escape_json(std::to_string(event.pid)) << "\","
-      << "\"timestamp\":\"" << escape_json(event.timestamp) << "\""
+       << "\"type\":\"" << escape_json(event.type) << "\","
+       << "\"syscall\":\"" << escape_json(syscall_value) << "\","
+       << "\"res\":\"" << escape_json(event.res) << "\","
+       << "\"auid\":\"" << escape_json(std::to_string(event.auid)) << "\","
+       << "\"euid\":\"" << escape_json(std::to_string(event.euid)) << "\","
+       << "\"exe\":\"" << escape_json(event.exe) << "\","
+       << "\"pid\":\"" << escape_json(std::to_string(event.pid)) << "\","
+       << "\"timestamp\":\"" << escape_json(event.timestamp) << "\""
        << "}";
   return json.str();
 }
