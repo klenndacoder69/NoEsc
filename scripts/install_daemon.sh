@@ -16,7 +16,7 @@ echo "[*] Step 0: Installing and verifying system dependencies..."
 if command -v apt-get >/dev/null 2>&1; then
     echo "    Detected apt-based system. Attempting automatic dependency installation..."
     apt-get update -qq || true
-    if ! apt-get install -yq g++ make auditd audispd-plugins python3 python3-venv python3-pip libnotify-bin dbus-x11; then
+    if ! apt-get install -yq g++ make auditd audispd-plugins python3 python3-venv python3-pip libnotify-bin dbus-user-session; then
         echo "[!] Warning: Automatic installation via apt-get failed."
         INSTALL_FAILED=1
     fi
@@ -137,6 +137,22 @@ touch /var/log/noesc_alerts.log
 # Only root should read security alerts
 chmod 600 /var/log/noesc_alerts.log
 
+echo "[*] Step 4.5: Ensuring auditd is running..."
+# On a fresh Ubuntu install, auditd is installed but not yet started.
+# The plugin directory and rule reload both require auditd to have run at least once.
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable auditd > /dev/null 2>&1 || true
+    systemctl start auditd 2>/dev/null || true
+    sleep 1
+fi
+# Ensure the plugins directory exists (created by auditd on first start)
+if [ ! -d "/etc/audit/plugins.d" ]; then
+    mkdir -p /etc/audit/plugins.d
+fi
+if [ ! -d "/etc/audit/rules.d" ]; then
+    mkdir -p /etc/audit/rules.d
+fi
+
 echo "[*] Step 5: Registering Audispd Plugin..."
 # If plugins.d doesn't exist, audispd might be using an older format, 
 # but modern Ubuntu/Debian uses plugins.d
@@ -160,11 +176,12 @@ else
     echo "[-] /etc/audit/rules.d not found. Rule injection skipped."
 fi
 
-echo "[*] Step 5b: Installing ML listener systemd unit..."
+echo "[*] Step 5b: Installing and enabling ML listener systemd unit..."
 if command -v systemctl >/dev/null 2>&1; then
     cp config/noesc-ml-listener.service /etc/systemd/system/noesc-ml-listener.service
     chmod 644 /etc/systemd/system/noesc-ml-listener.service
     systemctl daemon-reload
+    systemctl enable noesc-ml-listener > /dev/null 2>&1 || true
 else
     echo "[!] systemctl not found; skipped ML listener service install"
 fi
