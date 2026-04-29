@@ -108,6 +108,17 @@ else
   fi
 fi
 
+# Detect conflicting dual plugin configs (common source of mode mismatch).
+if [[ -f "/etc/audit/plugins.d/noesc.conf" && -f "/etc/audisp/plugins.d/noesc.conf" ]]; then
+  AUDIT_PLUGIN_PATH="$(extract_plugin_path "/etc/audit/plugins.d/noesc.conf")"
+  AUDISP_PLUGIN_PATH="$(extract_plugin_path "/etc/audisp/plugins.d/noesc.conf")"
+  if [[ "$AUDIT_PLUGIN_PATH" != "$AUDISP_PLUGIN_PATH" ]]; then
+    mark_fail "conflicting plugin paths: /etc/audit/plugins.d/noesc.conf -> $AUDIT_PLUGIN_PATH, /etc/audisp/plugins.d/noesc.conf -> $AUDISP_PLUGIN_PATH"
+  elif [[ "$AUDIT_PLUGIN_PATH" == "$WRAPPER_BIN" ]]; then
+    mark_pass "dual plugin configs are consistent"
+  fi
+fi
+
 MODE_VALUE=""
 if [[ -f "$MODE_FILE" ]]; then
   MODE_VALUE="$(normalize_mode "$(head -n1 "$MODE_FILE" 2>/dev/null || true)")"
@@ -120,7 +131,13 @@ else
   mark_warn "engine mode file missing; default behavior is hybrid"
 fi
 
-DAEMON_LINES="$(pgrep -af "^${DAEMON_BIN}($| )" || true)"
+collect_daemon_lines() {
+  # Health should validate the deployed daemon instance, not ad-hoc local
+  # test runs (e.g. ./noesc_daemon --rules-only from a shell).
+  pgrep -af "^${DAEMON_BIN}($| )" || true
+}
+
+DAEMON_LINES="$(collect_daemon_lines)"
 if [[ -n "$DAEMON_LINES" ]]; then
   DAEMON_COUNT="$(printf '%s\n' "$DAEMON_LINES" | rg -c "^" || true)"
 else

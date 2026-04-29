@@ -546,6 +546,11 @@ void RulesEngine::send_desktop_notification(const std::string &title,
 
   if (getuid() == 0) {
     auto resolve_target_user = [&]() -> std::optional<std::string> {
+      const char *notify_user = std::getenv("NOESC_NOTIFY_USER");
+      if (notify_user != nullptr && notify_user[0] != '\0') {
+        return std::string(notify_user);
+      }
+
       const char *sudo_user = std::getenv("SUDO_USER");
       if (sudo_user != nullptr && sudo_user[0] != '\0') {
         return std::string(sudo_user);
@@ -580,7 +585,8 @@ void RulesEngine::send_desktop_notification(const std::string &title,
     if (!resolved_user.has_value()) {
       if (notify_debug) {
         std::cerr << "[!] notify: could not resolve target GUI user (try setting "
-                     "SUDO_USER or export NOESC_NOTIFY_DEBUG=1 to inspect)"
+                     "NOESC_NOTIFY_USER or SUDO_USER; export NOESC_NOTIFY_DEBUG=1 "
+                     "to inspect)"
                   << std::endl;
       }
       return;

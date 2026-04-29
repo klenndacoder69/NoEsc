@@ -9,9 +9,10 @@ __pycache__/
 *.pyc
 
 # VE's
-venv/
+.venv/
 env/
 .env
+
 
 # datasets 
 data/

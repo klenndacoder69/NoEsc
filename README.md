@@ -16,6 +16,11 @@ sudo ./scripts/install_daemon.sh
 ```
 *This script will automatically install all system dependencies (`g++`, `auditd`, etc.), create a Python virtual environment, install ML requirements, compile the C++ daemon, and configure systemd and auditd to run NoEsc in the background.*
 
+To fully remove an installed NoEsc deployment and restore auditd/systemd state:
+```bash
+sudo ./scripts/uninstall_daemon.sh
+```
+
 ## Key Features
 
 - **Hybrid Engine**: Uses both C++ rules for instant alerts and Python ML for behavioral anomaly detection.

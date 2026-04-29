@@ -60,16 +60,30 @@ current_mode() {
 
 reload_auditd() {
   require_root
-  # Ensure mode changes apply immediately by removing stale daemon instances.
-  # auditd will respawn the plugin process with the latest wrapper-selected flags.
-  pkill -f "^${DAEMON_BIN}($| )" >/dev/null 2>&1 || true
-
-  if pgrep -x auditd >/dev/null 2>&1; then
-    pkill -HUP auditd || kill -s SIGHUP "$(pidof auditd)"
-    echo "[+] auditd reloaded"
-  else
+  if ! pgrep -x auditd >/dev/null 2>&1; then
     echo "[!] auditd is not running"
     return 1
+  fi
+
+  # Ensure mode changes apply immediately by removing stale daemon instances.
+  # Match deployed daemon and wrapper-spawn command forms.
+  pkill -f "^${DAEMON_BIN}($| )" >/dev/null 2>&1 || true
+  pkill -f "noesc-daemon-wrapper" >/dev/null 2>&1 || true
+  sleep 1
+
+  # Prefer a full restart for deterministic plugin respawn. Some hosts keep the
+  # old plugin worker alive across HUP, causing mode mismatches.
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl restart auditd >/dev/null 2>&1; then
+      echo "[+] auditd restarted"
+    else
+      # Fallback path for non-systemd or constrained environments.
+      pkill -HUP auditd || kill -s SIGHUP "$(pidof auditd)"
+      echo "[+] auditd reloaded"
+    fi
+  else
+    pkill -HUP auditd || kill -s SIGHUP "$(pidof auditd)"
+    echo "[+] auditd reloaded"
   fi
 }
 
