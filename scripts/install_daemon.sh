@@ -12,13 +12,87 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# Installed paths (must match steps below)
+NOESC_DAEMON_BIN="/usr/local/bin/noesc_daemon"
+NOESC_WRAPPER_BIN="/usr/local/bin/noesc-daemon-wrapper"
+
+wait_for_noesc_daemon() {
+    local timeout_secs="${1:-45}"
+    local deadline=$(( $(date +%s) + timeout_secs ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        if pgrep -f "^${NOESC_DAEMON_BIN}($| )" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.25
+    done
+    return 1
+}
+
+restart_auditd_for_plugin() {
+    pkill -f "^${NOESC_DAEMON_BIN}($| )" >/dev/null 2>&1 || true
+    pkill -f "noesc-daemon-wrapper" >/dev/null 2>&1 || true
+    sleep 0.5
+
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl restart auditd >/dev/null 2>&1; then
+            echo "[+] auditd restarted (plugin should spawn immediately)"
+            return 0
+        fi
+    fi
+    if pgrep -x auditd >/dev/null 2>&1; then
+        pkill -HUP auditd || kill -s SIGHUP "$(pidof auditd)" || true
+        echo "[+] auditd signaled (HUP) — plugin respawning"
+        return 0
+    fi
+    echo "[!] auditd is not running; cannot attach plugin."
+    return 1
+}
+
+# Skip all apt network work (offline / air-gapped): sudo NOESC_SKIP_APT=1 ./scripts/install_daemon.sh
+# When deps are already installed, apt is skipped automatically (fast reinstall).
+
+apt_deps_already_satisfied() {
+    command -v g++ >/dev/null 2>&1 || return 1
+    command -v make >/dev/null 2>&1 || return 1
+    command -v auditd >/dev/null 2>&1 || return 1
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 -m venv -h >/dev/null 2>&1 || return 1
+    command -v notify-send >/dev/null 2>&1 || return 1
+    command -v rg >/dev/null 2>&1 || return 1
+    dpkg -s audispd-plugins >/dev/null 2>&1 || return 1
+    return 0
+}
+
+run_apt_install() {
+    export DEBIAN_FRONTEND=noninteractive
+    # Fail faster when there is no network or mirrors are slow.
+    local apt_opts=(
+        -o Acquire::Retries=2
+        -o Acquire::http::Timeout=15
+        -o Acquire::https::Timeout=15
+    )
+    apt-get "${apt_opts[@]}" update -qq || true
+    apt-get "${apt_opts[@]}" install -yq --no-install-recommends \
+        g++ make auditd audispd-plugins python3 python3-venv python3-pip \
+        libnotify-bin dbus-user-session ripgrep
+}
+
 echo "[*] Step 0: Installing and verifying system dependencies..."
-if command -v apt-get >/dev/null 2>&1; then
-    echo "    Detected apt-based system. Attempting automatic dependency installation..."
-    apt-get update -qq || true
-    if ! apt-get install -yq g++ make auditd audispd-plugins python3 python3-venv python3-pip libnotify-bin dbus-user-session ripgrep; then
-        echo "[!] Warning: Automatic installation via apt-get failed."
+if [ "${NOESC_SKIP_APT:-0}" = "1" ]; then
+    echo "    NOESC_SKIP_APT=1 — skipping apt-get (ensure deps are installed manually)."
+    if ! apt_deps_already_satisfied; then
+        echo "[!] Required commands/packages appear missing. Install g++, make, auditd, audispd-plugins, python3+venv, libnotify-bin, ripgrep, etc., then retry."
         INSTALL_FAILED=1
+    fi
+elif command -v apt-get >/dev/null 2>&1; then
+    if apt_deps_already_satisfied; then
+        echo "    Detected apt-based system. Dependencies already present; skipping apt-get update/install."
+    else
+        echo "    Detected apt-based system. Attempting automatic dependency installation..."
+        if ! run_apt_install; then
+            echo "[!] Warning: Automatic installation via apt-get failed."
+            INSTALL_FAILED=1
+        fi
     fi
 else
     echo "[!] Warning: 'apt-get' not found. Automatic dependency installation is only supported on Debian/Ubuntu."
@@ -103,6 +177,17 @@ if [ ! -f /etc/noesc/engine_mode ]; then
     echo "hybrid" > /etc/noesc/engine_mode
 fi
 chmod 644 /etc/noesc/engine_mode
+
+# Optional: stable GUI username for desktop alerts (see /etc/noesc/notify_user).
+if [ ! -f /etc/noesc/notify_user.example ]; then
+    cat > /etc/noesc/notify_user.example <<'EOF'
+# Optional: put your GUI login name on a single line in /etc/noesc/notify_user
+# (not this file). Improves notification reliability after lock/login on Ubuntu/GDM.
+# Example line for notify_user:
+# swuffles
+EOF
+    chmod 644 /etc/noesc/notify_user.example
+fi
 
 # Seed ML listener environment file once (operator can edit after install).
 if [ ! -f /etc/noesc/ml_listener.env ]; then
@@ -194,29 +279,27 @@ echo 'x /tmp/noesc_ml.sock' > /etc/tmpfiles.d/noesc.conf
 chmod 644 /etc/tmpfiles.d/noesc.conf
 
 echo "[*] Step 6: Restarting services..."
-# Kill old daemon so auditd respawns it with the new binary.
-pkill -f "noesc_daemon" >/dev/null 2>&1 || true
-sleep 1
-
 # Remove stale ML socket so the listener can bind a fresh one.
 rm -f /tmp/noesc_ml.sock
 
 # Restart ML listener first (so socket is ready when daemon starts).
 if command -v systemctl >/dev/null 2>&1; then
     systemctl restart noesc-ml-listener 2>/dev/null || true
-    sleep 2
+    sleep 1
 fi
 
-# Reload auditd — this respawns the daemon plugin with the new binary.
-if pgrep -x auditd >/dev/null 2>&1; then
-    pkill -HUP auditd || kill -s SIGHUP "$(pidof auditd)"
-    echo "[+] auditd reloaded — daemon plugin respawning"
+# Force auditd to respawn the plugin immediately (full restart when possible).
+restart_auditd_for_plugin || true
+
+echo "    Waiting for NoEsc daemon process..."
+if wait_for_noesc_daemon 45; then
+    echo "[+] NoEsc daemon is running:"
+    pgrep -af "^${NOESC_DAEMON_BIN}($| )" | head -n3 | sed 's/^/       /'
 else
-    echo "[!] auditd is not running"
+    echo "[!] NoEsc daemon did not appear within 45s."
+    echo "    Check: sudo systemctl status auditd --no-pager"
+    echo "    Logs:  sudo journalctl -u auditd -n 60 --no-pager"
 fi
-
-# Give auditd a moment to respawn the plugin.
-sleep 2
 
 echo "----------------------------------------------------"
 echo "[+] INSTALLATION COMPLETE!"

@@ -46,6 +46,88 @@
 #include <syslog.h>
 #include <unistd.h>
 
+namespace {
+
+bool is_bad_notify_target(const std::string &u) {
+  if (u.empty() || u == "root")
+    return true;
+  static const char *deny[] = {"gdm",         "lightdm", "sddm",
+                                 "kdm",         "lxdm",    "display-manager",
+                                 "Debian-gdm", "gnome-remote-desktop"};
+  for (const char *d : deny) {
+    if (u == d)
+      return true;
+  }
+  if (u[0] == '_')
+    return true;
+  return false;
+}
+
+std::optional<std::string> read_notify_user_file() {
+  auto line = []() -> std::optional<std::string> {
+    std::ifstream f("/etc/noesc/notify_user");
+    if (!f.is_open())
+      return std::nullopt;
+    std::string s;
+    if (!std::getline(f, s))
+      return std::nullopt;
+    while (!s.empty() &&
+           (s.back() == '\r' || s.back() == '\n' ||
+            std::isspace(static_cast<unsigned char>(s.back()))))
+      s.pop_back();
+    size_t i = 0;
+    while (i < s.size() &&
+           std::isspace(static_cast<unsigned char>(s[i])))
+      i++;
+    s = s.substr(i);
+    if (s.empty() || s[0] == '#')
+      return std::nullopt;
+    return s;
+  }();
+  if (!line.has_value() || is_bad_notify_target(*line))
+    return std::nullopt;
+  return line;
+}
+
+std::optional<std::string> popen_first_line(const char *cmd) {
+  FILE *p = popen(cmd, "r");
+  if (!p)
+    return std::nullopt;
+  char buf[256] = {0};
+  if (fgets(buf, sizeof(buf), p) == nullptr) {
+    pclose(p);
+    return std::nullopt;
+  }
+  pclose(p);
+  std::string s(buf);
+  while (!s.empty() && (s.back() == '\n' || s.back() == '\r'))
+    s.pop_back();
+  if (s.empty() || is_bad_notify_target(s))
+    return std::nullopt;
+  return s;
+}
+
+void notify_fail_syslog_throttled(const char *msg) {
+  static time_t last = 0;
+  const time_t now = time(nullptr);
+  if (now - last < 180)
+    return;
+  last = now;
+  syslog(LOG_WARNING, "%s", msg);
+}
+
+bool have_runuser() {
+  static const char *candidates[] = {"/usr/sbin/runuser", "/sbin/runuser",
+                                     "/bin/runuser"};
+  for (const char *p : candidates) {
+    if (access(p, X_OK) == 0)
+      return true;
+  }
+  return false;
+}
+
+} // namespace
+
 RulesEngine::RulesEngine() { load_config(); }
 
 void RulesEngine::load_config() {
@@ -545,60 +627,89 @@ void RulesEngine::send_desktop_notification(const std::string &title,
   }
 
   if (getuid() == 0) {
+    // Prefer active graphical sessions first (avoids picking gdm during transitions).
+    static constexpr const char kLcGraphical[] =
+        "loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}' | "
+        "while read -r sid; do "
+        "[ -n \"$sid\" ] || continue; "
+        "active=$(loginctl show-session \"$sid\" -p Active --value 2>/dev/null); "
+        "[ \"$active\" = yes ] || continue; "
+        "name=$(loginctl show-session \"$sid\" -p Name --value 2>/dev/null); "
+        "case \"$name\" in "
+        "\"\"|root|gdm|lightdm|sddm|kdm|lxdm|display-manager|Debian-gdm|"
+        "gnome-remote-desktop) continue;; esac; "
+        "case \"$name\" in _*) continue;; esac; "
+        "stype=$(loginctl show-session \"$sid\" -p Type --value 2>/dev/null); "
+        "case \"$stype\" in wayland|x11) echo \"$name\"; exit 0;; esac; "
+        "done";
+
+    static constexpr const char kLcAnyActive[] =
+        "loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}' | "
+        "while read -r sid; do "
+        "[ -n \"$sid\" ] || continue; "
+        "active=$(loginctl show-session \"$sid\" -p Active --value 2>/dev/null); "
+        "[ \"$active\" = yes ] || continue; "
+        "name=$(loginctl show-session \"$sid\" -p Name --value 2>/dev/null); "
+        "case \"$name\" in "
+        "\"\"|root|gdm|lightdm|sddm|kdm|lxdm|display-manager|Debian-gdm|"
+        "gnome-remote-desktop) continue;; esac; "
+        "case \"$name\" in _*) continue;; esac; "
+        "echo \"$name\"; exit 0; "
+        "done";
+
     auto resolve_target_user = [&]() -> std::optional<std::string> {
+      if (auto fuser = read_notify_user_file(); fuser.has_value())
+        return fuser;
+
       const char *notify_user = std::getenv("NOESC_NOTIFY_USER");
       if (notify_user != nullptr && notify_user[0] != '\0') {
-        return std::string(notify_user);
+        std::string u(notify_user);
+        if (!is_bad_notify_target(u))
+          return u;
       }
 
       const char *sudo_user = std::getenv("SUDO_USER");
       if (sudo_user != nullptr && sudo_user[0] != '\0') {
-        return std::string(sudo_user);
+        std::string u(sudo_user);
+        if (!is_bad_notify_target(u))
+          return u;
       }
 
-      FILE *who_pipe =
-          popen("who | grep '(:' | awk '{print $1}' | head -n1", "r");
-      if (!who_pipe) {
-        return std::nullopt;
-      }
+      if (auto g = popen_first_line(kLcGraphical); g.has_value())
+        return g;
+      if (auto a = popen_first_line(kLcAnyActive); a.has_value())
+        return a;
 
-      char username[256] = {0};
-      if (fgets(username, sizeof(username), who_pipe) == nullptr) {
-        pclose(who_pipe);
-        return std::nullopt;
-      }
-      pclose(who_pipe);
-
-      size_t len = strlen(username);
-      if (len > 0 && username[len - 1] == '\n') {
-        username[len - 1] = '\0';
-      }
-
-      if (strlen(username) == 0) {
-        return std::nullopt;
-      }
-
-      return std::string(username);
+      return popen_first_line(
+          "who | grep '(:' | awk '{print $1}' | head -n1");
     };
 
     auto resolved_user = resolve_target_user();
     if (!resolved_user.has_value()) {
       if (notify_debug) {
-        std::cerr << "[!] notify: could not resolve target GUI user (try setting "
-                     "NOESC_NOTIFY_USER or SUDO_USER; export NOESC_NOTIFY_DEBUG=1 "
-                     "to inspect)"
+        std::cerr << "[!] notify: could not resolve target GUI user (set "
+                     "/etc/noesc/notify_user, NOESC_NOTIFY_USER, or SUDO_USER; "
+                     "export NOESC_NOTIFY_DEBUG=1)"
                   << std::endl;
       }
+      notify_fail_syslog_throttled(
+          "noesc notify: could not resolve GUI user for desktop notifications "
+          "(common after lock/login until session is active)");
       return;
     }
 
     FILE *uid_pipe = popen(("id -u " + *resolved_user).c_str(), "r");
-    if (!uid_pipe)
+    if (!uid_pipe) {
+      notify_fail_syslog_throttled(
+          "noesc notify: id -u failed for resolved notify user");
       return;
+    }
 
     char uid_str[32] = {0};
     if (fgets(uid_str, sizeof(uid_str), uid_pipe) == nullptr) {
       pclose(uid_pipe);
+      notify_fail_syslog_throttled(
+          "noesc notify: could not map notify user to uid");
       return;
     }
     pclose(uid_pipe);
@@ -607,28 +718,40 @@ void RulesEngine::send_desktop_notification(const std::string &title,
       uid_str[uid_len - 1] = '\0';
     }
 
-    // Used export since session will be a root ran in a program. since there are multiple commands that are being ran, using export we guarantee that 
-    // the next processes would get the DBUS session address.
+    const std::string uid = std::string(uid_str);
     const std::string redirect_suffix =
         notify_debug ? "" : (" 2>/dev/null" + notify_sleep_cmd + " >/dev/null 2>&1");
     const std::string notify_pipeline_suffix =
         notify_debug ? notify_sleep_cmd : "";
 
-    std::string notify_cmd =
-        "su " + *resolved_user +
-        " -c 'export XDG_RUNTIME_DIR=/run/user/" + std::string(uid_str) +
-        "; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/" +
-        std::string(uid_str) +
-        "/bus; notify-send -p --app-name=NoEsc --urgency=" + urgency +
+    const std::string inner =
+        "for i in $(seq 1 40); do test -S /run/user/" + uid +
+        "/bus && break; sleep 0.2; done; "
+        "export XDG_RUNTIME_DIR=/run/user/" + uid + "; "
+        "export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/" + uid +
+        "/bus; "
+        "notify-send -p --app-name=NoEsc --urgency=" + urgency +
         " --icon=" + icon + " \"" + safe_title + "\"" + " \"" + safe_body +
-        "\"" + notify_pipeline_suffix + redirect_suffix + "' &";
+        "\"" + notify_pipeline_suffix + redirect_suffix;
+
+    std::string notify_cmd;
+    if (have_runuser()) {
+      notify_cmd = "runuser -u " + *resolved_user + " -- sh -c '" + inner +
+                   "' &";
+    } else {
+      notify_cmd =
+          "su " + *resolved_user + " -c '" + inner + "' &";
+    }
 
     int rc = system(notify_cmd.c_str());
-    if (notify_debug && rc != 0) {
-      std::cerr << "[!] notify: notify-send pipeline returned rc=" << rc
-                << std::endl;
-      syslog(LOG_WARNING, "noesc notify: notify-send pipeline returned rc=%d",
-             rc);
+    if (rc != 0) {
+      if (notify_debug) {
+        std::cerr << "[!] notify: notify-send pipeline returned rc=" << rc
+                  << std::endl;
+      }
+      notify_fail_syslog_throttled(
+          "noesc notify: notify-send pipeline failed (session bus not ready, "
+          "wrong user, or notify-send error)");
     }
 
   } else {
