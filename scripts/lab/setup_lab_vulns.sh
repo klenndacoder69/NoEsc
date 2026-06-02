@@ -1,4 +1,8 @@
-#!/bin/bash
+﻿#!/bin/bash
+
+# NOTE: This script must be run from the NoEsc project root directory.
+# Example: ./scripts/lab/setup_lab_vulns.sh
+# Running from any other directory will cause relative paths (e.g. sample_set/, .venv/) to break.
 
 # NoEsc lab setup: plant one randomized SUID backdoor binary for Vector 1.
 

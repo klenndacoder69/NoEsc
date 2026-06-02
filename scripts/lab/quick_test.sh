@@ -1,4 +1,8 @@
-#!/bin/bash
+﻿#!/bin/bash
+
+# NOTE: This script must be run from the NoEsc project root directory.
+# Example: ./scripts/lab/quick_test.sh
+# Running from any other directory will cause relative paths (e.g. sample_set/, .venv/) to break.
 
 echo "==================================="
 echo "NoEsc Quick Detection Test"
@@ -43,7 +47,7 @@ echo "==================================="
 
 if [ -f noesc_alerts.log ]; then
     echo ""
-    echo "✅ ATTACK DETECTED!"
+    echo "âœ… ATTACK DETECTED!"
     echo ""
     cat noesc_alerts.log
     echo ""
@@ -57,7 +61,7 @@ if [ -f noesc_alerts.log ]; then
     fi
 else
     echo ""
-    echo "⚠️  Log file not created (but check terminal output above)"
+    echo "âš ï¸  Log file not created (but check terminal output above)"
     echo ""
 fi
 

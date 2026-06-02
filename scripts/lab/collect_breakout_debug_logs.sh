@@ -1,4 +1,8 @@
-#!/bin/bash
+﻿#!/bin/bash
+
+# NOTE: This script must be run from the NoEsc project root directory.
+# Example: ./scripts/lab/collect_breakout_debug_logs.sh
+# Running from any other directory will cause relative paths (e.g. sample_set/, .venv/) to break.
 
 # Collects reproducible diagnostics for execute_lab_breakout sudo/PAM failures.
 

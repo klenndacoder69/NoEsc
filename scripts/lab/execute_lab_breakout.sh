@@ -1,4 +1,8 @@
-#!/bin/bash
+﻿#!/bin/bash
+
+# NOTE: This script must be run from the NoEsc project root directory.
+# Example: ./scripts/lab/execute_lab_breakout.sh
+# Running from any other directory will cause relative paths (e.g. sample_set/, .venv/) to break.
 
 # NoEsc lab execution: generate malicious-sequence audit events for all 3 vectors.
 

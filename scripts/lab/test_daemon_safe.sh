@@ -1,4 +1,8 @@
-#!/bin/bash
+﻿#!/bin/bash
+
+# NOTE: This script must be run from the NoEsc project root directory.
+# Example: ./scripts/lab/test_daemon_safe.sh
+# Running from any other directory will cause relative paths (e.g. sample_set/, .venv/) to break.
 
 # Get the directory where the script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -65,7 +69,7 @@ echo "==================================="
 
 if [ -f noesc_alerts.log ] && [ -s noesc_alerts.log ]; then
     echo ""
-    echo "✅ SUCCESS! NoEsc detected the attack:"
+    echo "âœ… SUCCESS! NoEsc detected the attack:"
     echo ""
     cat noesc_alerts.log
     echo ""
@@ -80,7 +84,7 @@ if [ -f noesc_alerts.log ] && [ -s noesc_alerts.log ]; then
     fi
 else
     echo ""
-    echo "❌ No alerts detected. Possible reasons:"
+    echo "âŒ No alerts detected. Possible reasons:"
     echo ""
     echo "1. Check if auditd is running:"
     echo "   sudo systemctl status auditd"
