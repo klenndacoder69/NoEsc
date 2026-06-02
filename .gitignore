@@ -39,3 +39,4 @@ models/**/*.h5
 
 model_results/README.md
 track_logs
+export_config
