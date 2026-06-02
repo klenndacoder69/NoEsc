@@ -22,11 +22,20 @@ data/
 # references
 noesc_references/
 # trained models
-# models/*.pkl
+models/**/*.pkl
+models/**/*.h5
 
+# LaTeX build files
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.synctex.gz
 # Ignore OS files
 .DS_Store
 
 .idea/
 
 model_results/README.md
+track_logs
